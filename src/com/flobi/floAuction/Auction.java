@@ -4,722 +4,789 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-import org.bukkit.FireworkEffect;
-import org.bukkit.Material;
+import org.bukkit.Bukkit;
 import org.bukkit.command.CommandSender;
 import org.bukkit.enchantments.Enchantment;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 
-import com.flobi.utility.functions;
-import com.flobi.utility.items;
+import com.flobi.floAuction.events.AuctionBidEvent;
+import com.flobi.floAuction.events.AuctionEndEvent;
+import com.flobi.floAuction.events.AuctionStartEvent;
+import com.flobi.floAuction.utility.CArrayList;
+import com.flobi.floAuction.utility.functions;
+import com.flobi.floAuction.utility.items;
 
-public class Auction {
-	protected floAuction plugin;
-	private String[] args;
-	private String ownerName;
-	private String scope;
-	
-	public double extractedPreTax = 0;
-	public double extractedPostTax = 0;
-
-	private long startingBid = 0;
-	private long minBidIncrement = 0;
-	private long buyNow = 0;
-	private int quantity = 0;
-	private int time = 0;
-	private boolean active = false;
-	
-	private AuctionLot lot;
-	private AuctionBid currentBid;
-	public ArrayList<AuctionBid> sealedBids = new ArrayList<AuctionBid>(); 
-	
-	public boolean sealed = false;
-	
-	public long nextTickTime = 0;
-	
-	// Scheduled timers:
-	private int countdown = 0;
-	private int countdownTimer = 0;
-	
-	public String getScope() {
-		return scope;
-	}
-	
-	public Auction(floAuction plugin, Player auctionOwner, String[] inputArgs, String scope, boolean sealed) {
-		ownerName = auctionOwner.getName();
-		args = functions.mergeInputArgs(auctionOwner.getName(), inputArgs, false);
-		this.plugin = plugin; 
-		this.scope = scope;
-		this.sealed = sealed;
-	}
-	
-	public Boolean start() {
-		
-		ItemStack typeStack = lot.getTypeStack();
-		double preAuctionTax = floAuction.taxPerAuction;
-		
-		// Check banned items:
-		for (int i = 0; i < floAuction.bannedItems.size(); i++) {
-			if (items.isSameItem(typeStack, floAuction.bannedItems.get(i))) {
-				floAuction.sendMessage("auction-fail-banned", ownerName, this);
-				return false;
-			}
-		}
-		
-		for (Map.Entry<String, String> entry : floAuction.taxedItems.entrySet()) {
-			if (items.isSameItem(typeStack, entry.getKey())) {
-				String itemTax = entry.getValue();
-				
-				if (itemTax.endsWith("a")) {
-					try {
-						preAuctionTax = Double.valueOf(itemTax.substring(0, itemTax.length() - 1));
-					} catch (Exception e) {
-						// Clearly this isn't a valid number, just forget about it.
-						preAuctionTax = floAuction.taxPerAuction;
-					}
-				} else if (!itemTax.endsWith("%")) {
-					try {
-						preAuctionTax = Double.valueOf(itemTax);
-						preAuctionTax *= quantity;
-					} catch (Exception e) {
-						// Clearly this isn't a valid number, just forget about it.
-						preAuctionTax = floAuction.taxPerAuction;
-					}
-				}
-				break;
-			}
-		}		
-		
-		if (preAuctionTax > 0D) {
-			if (!floAuction.econ.has(ownerName, preAuctionTax)) {
-				floAuction.sendMessage("auction-fail-start-tax", ownerName, this);
-				return false;
-			}
-		}
-		
-		if (!lot.AddItems(quantity, true)) {
-			floAuction.sendMessage("auction-fail-insufficient-supply", ownerName, this);
-			return false;
-		}
-
-		if (preAuctionTax > 0D) {
-			if (floAuction.econ.has(ownerName, preAuctionTax)) {
-				floAuction.econ.withdrawPlayer(ownerName, preAuctionTax);
-				extractedPreTax = preAuctionTax;
-				floAuction.sendMessage("auction-start-tax", getOwner(), this);
-				if (!floAuction.taxDestinationUser.isEmpty()) floAuction.econ.depositPlayer(floAuction.taxDestinationUser, preAuctionTax);
-			}
-		}
-
-		active = true;
-		floAuction.currentAuctionOwnerLocation = floAuction.server.getPlayer(ownerName).getLocation().clone();
-		floAuction.currentAuctionOwnerGamemode = floAuction.server.getPlayer(ownerName).getGameMode();
-		floAuction.sendMessage("auction-start", (CommandSender) null, this, true);
-		
-		// Set timer:
-		final Auction thisAuction = this;
-		countdown = time;
-		
-		countdownTimer = plugin.getServer().getScheduler().scheduleSyncRepeatingTask(plugin, new Runnable() {
-		    public void run() {
-		    	if (thisAuction.nextTickTime > System.currentTimeMillis()) return;
-		    	thisAuction.nextTickTime = thisAuction.nextTickTime + 1000;
-		    	
-		    	thisAuction.countdown--;
-		    	if (thisAuction.countdown <= 0) {
-		    		thisAuction.end();
-		    		return;
-		    	}
-		    	if (!floAuction.suppressCountdown){
-			    	if (thisAuction.countdown < 4) {
-				    	floAuction.sendMessage("timer-countdown-notification", (CommandSender) null, thisAuction, true);
-				    	return;
-			    	}
-			    	if (thisAuction.time >= 20) {
-			    		if (thisAuction.countdown == (int) (thisAuction.time / 2)) {
-					    	floAuction.sendMessage("timer-countdown-notification", (CommandSender) null, thisAuction, true);
-			    		}
-			    	}
-		    	}
-		    }
-		}, 1L, 1L);
-		nextTickTime = System.currentTimeMillis() + 1000;
-
-		info(null, true);
-		return true;
-	}
-	public void info(CommandSender sender, boolean fullBroadcast) {
-		List<String> messageKeys = new ArrayList<String>();
-		
-		ItemStack itemType = this.getLotType();
-		short maxDurability = itemType.getType().getMaxDurability();
-		short currentDurability = itemType.getDurability();
-		Map<Enchantment, Integer> enchantments = itemType.getEnchantments();
-		if (enchantments == null || enchantments.size() == 0) enchantments = items.getStoredEnchantments(itemType);
-		if (!active) {
-			floAuction.sendMessage("auction-info-no-auction", sender, this, fullBroadcast);
-			return;
-		} else if (fullBroadcast && floAuction.suppressAuctionStartInfo) {
-			messageKeys.add("auction-info-suppressed-alt");
-			if (floAuction.allowBuyNow && getBuyNow() > 0) messageKeys.add("auction-info-buynow");
-		} else if (sealed) {
-			messageKeys.add("auction-info-header-sealed");
-			if (items.getDisplayName(itemType) != null && !items.getDisplayName(itemType).isEmpty()) messageKeys.add("auction-info-display-name");
-			if (items.getBookTitle(itemType) != null && !items.getBookTitle(itemType).isEmpty()) messageKeys.add("auction-info-book-title");
-			if (items.getBookAuthor(itemType) != null && !items.getBookAuthor(itemType).isEmpty()) messageKeys.add("auction-info-book-author");
-			if (enchantments != null && enchantments.size() > 0) messageKeys.add("auction-info-enchantment");
-			if (maxDurability > 0 && currentDurability > 0) messageKeys.add("auction-info-damage");
-
-			// Firework data
-			FireworkEffect[] payload = items.getFireworkEffects(itemType);
-			if (payload != null && payload.length > 0) {
-				messageKeys.add("auction-info-payload");
-			}
-			if (itemType.getType() == Material.FIREWORK) {
-				messageKeys.add("auction-info-payload-power");
-			}
-			String[] lore = items.getLore(itemType);
-			if (lore != null && lore.length > 0) {
-				messageKeys.add("auction-info-lore-header");
-				messageKeys.add("auction-info-lore-detail");
-				messageKeys.add("auction-info-lore-footer");
-			}
-
-			messageKeys.add("auction-info-footer-sealed");
-		} else if (currentBid == null) {
-			messageKeys.add("auction-info-header-nobids");
-			if (items.getDisplayName(itemType) != null && !items.getDisplayName(itemType).isEmpty()) messageKeys.add("auction-info-display-name");
-			if (items.getBookTitle(itemType) != null && !items.getBookTitle(itemType).isEmpty()) messageKeys.add("auction-info-book-title");
-			if (items.getBookAuthor(itemType) != null && !items.getBookAuthor(itemType).isEmpty()) messageKeys.add("auction-info-book-author");
-			if (enchantments != null && enchantments.size() > 0) messageKeys.add("auction-info-enchantment");
-			if (maxDurability > 0 && currentDurability > 0) messageKeys.add("auction-info-damage");
-
-			// Firework data
-			FireworkEffect[] payload = items.getFireworkEffects(itemType);
-			if (payload != null && payload.length > 0) {
-				messageKeys.add("auction-info-payload");
-			}
-			if (itemType.getType() == Material.FIREWORK) {
-				messageKeys.add("auction-info-payload-power");
-			}
-			String[] lore = items.getLore(itemType);
-			if (lore != null && lore.length > 0) {
-				messageKeys.add("auction-info-lore-header");
-				messageKeys.add("auction-info-lore-detail");
-				messageKeys.add("auction-info-lore-footer");
-			}
-			
-			messageKeys.add("auction-info-footer-nobids");
-			if (floAuction.allowBuyNow && getBuyNow() > 0) messageKeys.add("auction-info-buynow");
-		} else {
-			messageKeys.add("auction-info-header");
-			if (items.getDisplayName(itemType) != null && !items.getDisplayName(itemType).isEmpty()) messageKeys.add("auction-info-display-name");
-			if (items.getBookTitle(itemType) != null && !items.getBookTitle(itemType).isEmpty()) messageKeys.add("auction-info-book-title");
-			if (items.getBookAuthor(itemType) != null && !items.getBookAuthor(itemType).isEmpty()) messageKeys.add("auction-info-book-author");
-			if (enchantments != null && enchantments.size() > 0) messageKeys.add("auction-info-enchantment");
-			if (maxDurability > 0 && currentDurability > 0) messageKeys.add("auction-info-damage");
-
-			// Firework data
-			FireworkEffect[] payload = items.getFireworkEffects(itemType);
-			if (payload != null && payload.length > 0) {
-				messageKeys.add("auction-info-payload");
-			}
-			if (itemType.getType() == Material.FIREWORK) {
-				messageKeys.add("auction-info-payload-power");
-			}
-			String[] lore = items.getLore(itemType);
-			if (lore != null && lore.length > 0) {
-				messageKeys.add("auction-info-lore-header");
-				messageKeys.add("auction-info-lore-detail");
-				messageKeys.add("auction-info-lore-footer");
-			}
-			
-			messageKeys.add("auction-info-footer");
-			if (floAuction.allowBuyNow && getBuyNow() > 0) messageKeys.add("auction-info-buynow");
-		}
-		floAuction.sendMessage(messageKeys, sender, this, fullBroadcast);
-	}
-	public void cancel() {
-		floAuction.sendMessage("auction-cancel", (CommandSender) null, this, true);
-		if (lot != null) lot.cancelLot();
-		if (currentBid != null) currentBid.cancelBid();
-		dispose();
-	}
-	public void confiscate(Player authority) {
-		ownerName = authority.getName();
-		floAuction.sendMessage("auction-confiscated", (CommandSender) null, this, true);
-		if (lot != null) {
-			lot.setOwner(authority.getName());
-			lot.cancelLot();
-		}
-		if (currentBid != null) currentBid.cancelBid();
-		dispose();
-	}
-	public void end() {
-		if (currentBid == null || lot == null) {
-			floAuction.sendMessage("auction-end-nobids", (CommandSender) null, this, true);
-			if (lot != null) lot.cancelLot();
-			if (currentBid != null) currentBid.cancelBid();
-		} else {
-			floAuction.sendMessage("auction-end", (CommandSender) null, this, true);
-			lot.winLot(currentBid.getBidder());
-			currentBid.winBid();
-		}
-		dispose();
-	}
-	private void dispose() {
-		plugin.getServer().getScheduler().cancelTask(countdownTimer);
-
-		sealed = false;
-		for(int i = 0; i < sealedBids.size(); i++) {
-			sealedBids.get(i).cancelBid();
-		}
-		
-		plugin.detachAuction(this);
-	}
-	public Boolean isValid() {
-		if (!isValidOwner()) return false;
-		if (!isValidParticipant()) return false;
-		if (!parseHeldItem()) return false;
-		if (!parseArgs()) return false;
-		if (!isValidAmount()) return false;
-		if (!isValidStartingBid()) return false;
-		if (!isValidIncrement()) return false;
-		if (!isValidTime()) return false;
-		if (!isValidBuyNow()) return false;
-		return true;
-	}
-	public void Bid(Player bidder, String[] inputArgs) {
-
-		// BuyNow
-		if (floAuction.allowBuyNow && inputArgs.length > 0) {
-			if (inputArgs[0].equalsIgnoreCase("buy")) {
-
-				if (buyNow == 0 || (currentBid != null && currentBid.getBidAmount() >= buyNow)) {
-					floAuction.sendMessage("bid-fail-buynow-expired", bidder, this, false);
-				} else {
-					inputArgs[0] = Double.toString(functions.getUnsafeMoney(buyNow));
-					AuctionBid bid = new AuctionBid(this, bidder, inputArgs);
-					if (bid.getError() != null) {
-						failBid(bid, bid.getError());
-						return;
-					} else {
-						// raisOwnBid does nothing if it's not the current bidder.
-						if (currentBid != null) bid.raiseOwnBid(currentBid);
-						setNewBid(bid, null);
-						end();
-					}
-				}
-				return;
-			}
-		}
-		
-		// Normal bid
-		AuctionBid bid = new AuctionBid(this, bidder, inputArgs);
-		if (bid.getError() != null) {
-			failBid(bid, bid.getError());
-			return;
-		}
-		
-		if (currentBid == null) {
-			if (bid.getBidAmount() < getStartingBid()) {
-				failBid(bid, "bid-fail-under-starting-bid");
-				return;
-			}
-			setNewBid(bid, "bid-success-no-challenger");
-			return;
-		}
-		long previousBidAmount = currentBid.getBidAmount();
-		long previousMaxBidAmount = currentBid.getMaxBidAmount();
-		if (currentBid.getBidder().equals(bidder.getName())) {
-			if (bid.raiseOwnBid(currentBid)) {
-				setNewBid(bid, "bid-success-update-own-bid");
-			} else {
-				if (previousMaxBidAmount < currentBid.getMaxBidAmount()) {
-					failBid(bid, "bid-success-update-own-maxbid");
-				} else {
-					failBid(bid, "bid-fail-already-current-bidder");
-				}
-			}
-			return;
-		}
-		AuctionBid winner = null;
-		AuctionBid loser = null;
-		
-		if (floAuction.useOldBidLogic) {
-			if (bid.getMaxBidAmount() > currentBid.getMaxBidAmount()) {
-				winner = bid;
-				loser = currentBid;
-			} else {
-				winner = currentBid;
-				loser = bid;
-			}
-			winner.raiseBid(Math.max(winner.getBidAmount(), Math.min(winner.getMaxBidAmount(), loser.getBidAmount() + minBidIncrement)));
-		} else {
-			// If you follow what this does, congratulations.  
-			long baseBid = 0;
-			if (bid.getBidAmount() >= currentBid.getBidAmount() + minBidIncrement) {
-				baseBid = bid.getBidAmount();
-			} else {
-				baseBid = currentBid.getBidAmount() + minBidIncrement;
-			}
-			
-			Integer prevSteps = (int) Math.floor((double)(currentBid.getMaxBidAmount() - baseBid + minBidIncrement) / minBidIncrement / 2);
-			Integer newSteps = (int) Math.floor((double)(bid.getMaxBidAmount() - baseBid) / minBidIncrement / 2);
-
-			if (newSteps >= prevSteps) {
-				winner = bid;
-				winner.raiseBid(baseBid + (Math.max(0, prevSteps) * minBidIncrement * 2));
-				loser = currentBid;
-			} else {
-				winner = currentBid;
-				winner.raiseBid(baseBid + (Math.max(0, newSteps + 1) * minBidIncrement * 2) - minBidIncrement);
-				loser = bid;
-			}
-			
-		}
-
-		if (previousBidAmount <= winner.getBidAmount()) {
-			// Did the new bid win?
-			if (winner.equals(bid)) {
-				setNewBid(bid, "bid-success-outbid");
-			} else {
-				// Did the old bid have to raise the bid to stay winner?
-				if (previousBidAmount < winner.getBidAmount()) {
-					if (!this.sealed && !floAuction.broadCastBidUpdates) floAuction.sendMessage("bid-auto-outbid", (CommandSender) null, this, true);
-					failBid(bid, "bid-fail-auto-outbid");
-				} else {
-					if (!this.sealed) floAuction.sendMessage("bid-fail-too-low", bid.getBidder(), this);
-					failBid(bid, null);
-				}
-			}
-		} else {
-			// Seriously don't know what could cause this, but might as well take care of it.
-			floAuction.sendMessage("bid-fail-too-low", bid.getBidder(), this);
-		}
-		
-		
-		
-	}
-	private void failBid(AuctionBid newBid, String reason) {
-		newBid.cancelBid();
-		if (this.sealed && (newBid.getError() == null || newBid.getError().isEmpty())) {
-			floAuction.sendMessage("bid-success-sealed", newBid.getBidder(), this);
-		} else {
-			floAuction.sendMessage(reason, newBid.getBidder(), this);
-		}
-	}
-	private void setNewBid(AuctionBid newBid, String reason) {
-		AuctionBid prevBid = currentBid;
-		
-		if (floAuction.expireBuyNowOnFirstBid) setBuyNow(0);
-		
-		if (currentBid != null) {
-			currentBid.cancelBid();
-		}
-		currentBid = newBid;
-		floAuction.currentBidPlayerLocation = floAuction.server.getPlayer(newBid.getBidder()).getLocation().clone();
-		floAuction.currentBidPlayerGamemode = floAuction.server.getPlayer(newBid.getBidder()).getGameMode();
-		if (this.sealed) {
-			floAuction.sendMessage("bid-success-sealed", newBid.getBidder(), this);
-		} else if (floAuction.broadCastBidUpdates) {
-			floAuction.sendMessage(reason, (CommandSender) null, this, true);
-		} else {
-			floAuction.sendMessage(reason, newBid.getBidder(), this);
-			if (prevBid != null && newBid.getBidder().equalsIgnoreCase(prevBid.getBidder())) {
-				floAuction.sendMessage(reason, prevBid.getBidder(), this);
-			}
-		}
-		Participant.addParticipant(newBid.getBidder());
-		
-        // see if antisnipe is enabled...
-        if (!this.sealed && floAuction.antiSnipe == true && this.getRemainingTime() <= floAuction.antiSnipePreventionSeconds) {
-        	this.addToRemainingTime((floAuction.antiSnipeExtensionSeconds));
-	        floAuction.sendMessage("anti-snipe-time-added", null, this, true);
-        }
-	}
-	private Boolean parseHeldItem() {
-		Player owner = floAuction.server.getPlayer(ownerName);
-		if (lot != null) {
-			return true;
-		}
-		ItemStack heldItem = owner.getItemInHand();
-		if (heldItem == null || heldItem.getAmount() == 0) {
-			floAuction.sendMessage("auction-fail-hand-is-empty", owner, this, false);
-			return false;
-		}
-		lot = new AuctionLot(heldItem, ownerName);
-		
-		ItemStack itemType = lot.getTypeStack();
-		
-		if (
-				!floAuction.allowDamagedItems &&
-				itemType.getType().getMaxDurability() > 0 &&
-				itemType.getDurability() > 0
-		) {
-			floAuction.sendMessage("auction-fail-damaged-item", owner, this, false);
-			lot = null;
-			return false;
-		}
-		
-    	String displayName = items.getDisplayName(itemType);
-    	if (displayName == null) displayName = "";
-    	
-		if (!displayName.isEmpty() && !floAuction.allowRenamedItems) {
-			floAuction.sendMessage("auction-fail-renamed-item", owner, this, false);
-			lot = null;
-			return false;
-		}
-		
-		// Check lore:
-		String[] lore = items.getLore(heldItem);
-		if (lore != null && floAuction.bannedLore != null) {
-			for (int i = 0; i < floAuction.bannedLore.size(); i++) {
-				for (int j = 0; j < lore.length; j++) {
-					if (lore[j].toLowerCase().contains(floAuction.bannedLore.get(i).toLowerCase())) {
-						floAuction.sendMessage("auction-fail-banned-lore", owner, this, false);
-						lot = null;
-						return false;
-					}
-				}
-			}
-		}
-		
-		return true;
-	}
-	private Boolean parseArgs() {
-		// (amount) (starting price) (increment) (time) (buynow)
-		if (!parseArgAmount()) return false;
-		if (!parseArgStartingBid()) return false;
-		if (!parseArgIncrement()) return false;
-		if (!parseArgTime()) return false;
-		if (!parseArgBuyNow()) return false;
-		return true;
-	}
-	private Boolean isValidOwner() {
-		if (ownerName == null) {
-			floAuction.sendMessage("auction-fail-invalid-owner", (Player) plugin.getServer().getConsoleSender(), this, false);
-			return false;
-		}
-		return true;
-	}
-	
-	private Boolean isValidParticipant() {
-		if (Participant.checkLocation(ownerName)) {
-			return true;
-		}
-		floAuction.sendMessage("auction-fail-outside-auctionhouse", ownerName, this);
-		return false;
-	}
-	
-	private Boolean isValidAmount() {
-		if (quantity <= 0) {
-			floAuction.sendMessage("auction-fail-quantity-too-low", ownerName, this);
-			return false;
-		}
-		if (!items.hasAmount(ownerName, quantity, lot.getTypeStack())) {
-			floAuction.sendMessage("auction-fail-insufficient-supply", ownerName, this);
-			return false;
-		}
-		return true;
-	}
-	private Boolean isValidStartingBid() {
-		if (startingBid < 0) {
-			floAuction.sendMessage("auction-fail-starting-bid-too-low", ownerName, this);
-			return false;
-		} else if (startingBid > floAuction.maxStartingBid) {
-			floAuction.sendMessage("auction-fail-starting-bid-too-high", ownerName, this);
-			return false;
-		}
-		return true;
-	}
-	private Boolean isValidIncrement() {
-		if (getMinBidIncrement() < floAuction.minIncrement) {
-			floAuction.sendMessage("auction-fail-increment-too-low", ownerName, this);
-			return false;
-		}
-		if (getMinBidIncrement() > floAuction.maxIncrement) {
-			floAuction.sendMessage("auction-fail-increment-too-high", ownerName, this);
-			return false;
-		}
-		return true;
-	}
-	private Boolean isValidBuyNow() {
-		if (getBuyNow() < 0) {
-			floAuction.sendMessage("auction-fail-buynow-too-low", ownerName, this);
-			return false;
-		}
-		if (getBuyNow() > floAuction.maxBuyNow) {
-			floAuction.sendMessage("auction-fail-buynow-too-high", ownerName, this);
-			return false;
-		}
-		return true;
-	}
-	private Boolean isValidTime() {
-		if (time < floAuction.minTime) {
-			floAuction.sendMessage("auction-fail-time-too-low", ownerName, this);
-			return false;
-		}
-		if (time > floAuction.maxTime) {
-			floAuction.sendMessage("auction-fail-time-too-high", ownerName, this);
-			return false;
-		}
-		return true;
-	}
-	private Boolean parseArgAmount() {
-		if (quantity > 0) return true;
-
-		ItemStack lotType = lot.getTypeStack();
-		if (args.length > 0) {
-			if (args[0].equalsIgnoreCase("this") || args[0].equalsIgnoreCase("hand")) {
-				quantity = lotType.getAmount();
-			} else if (args[0].equalsIgnoreCase("all")) {
-				quantity = items.getAmount(ownerName, lotType);
-			} else if (args[0].matches("[0-9]{1,7}")) {
-				quantity = Integer.parseInt(args[0]);
-			} else {
-				floAuction.sendMessage("parse-error-invalid-quantity", ownerName, this);
-				return false;
-			}
-		} else {
-			quantity = lotType.getAmount();
-		}
-		if (quantity < 0) {
-			floAuction.sendMessage("parse-error-invalid-quantity", ownerName, this);
-			return false;
-		}
-		return true;
-	}
-	private Boolean parseArgStartingBid() {
-		if (startingBid > 0) return true;
-		
-		if (args.length > 1) {
-			if (!args[1].isEmpty() && args[1].matches(floAuction.decimalRegex)) {
-				startingBid = functions.getSafeMoney(Double.parseDouble(args[1]));
-			} else {
-				floAuction.sendMessage("parse-error-invalid-starting-bid", ownerName, this);
-				return false;
-			}
-		} else {
-			startingBid = floAuction.defaultStartingBid;
-		}
-		if (startingBid < 0) {
-			floAuction.sendMessage("parse-error-invalid-starting-bid", ownerName, this);
-			return false;
-		}
-		return true;
-	}
-	private Boolean parseArgIncrement() {
-		if (minBidIncrement > 0) return true;
-
-		if (args.length > 2) {
-			if (!args[2].isEmpty() && args[2].matches(floAuction.decimalRegex)) {
-				minBidIncrement = functions.getSafeMoney(Double.parseDouble(args[2]));
-			} else {
-				floAuction.sendMessage("parse-error-invalid-bid-increment", ownerName, this);
-				return false;
-			}
-		} else {
-			minBidIncrement = floAuction.defaultBidIncrement;
-		}
-		if (minBidIncrement < 0) {
-			floAuction.sendMessage("parse-error-invalid-bid-increment", ownerName, this);
-			return false;
-		}
-		return true;
-	}
-	private Boolean parseArgTime() {
-		if (time > 0) return true;
-
-		if (args.length > 3) {
-			if (args[3].matches("[0-9]{1,7}")) {
-				time = Integer.parseInt(args[3]);
-			} else {
-				floAuction.sendMessage("parse-error-invalid-time", ownerName, this);
-				return false;
-			}
-		} else {
-			time = floAuction.defaultAuctionTime;
-		}
-		if (time < 0) {
-			floAuction.sendMessage("parse-error-invalid-time", ownerName, this);
-			return false;
-		}
-		return true;
-	}
-	private Boolean parseArgBuyNow() {
-		
-		if (this.sealed || !floAuction.allowBuyNow) {
-			setBuyNow(0);
-			return true;
-		}
-
-		if (getBuyNow() > 0) return true;
-
-		if (args.length > 4) {
-			if (!args[4].isEmpty() && args[4].matches(floAuction.decimalRegex)) {
-				setBuyNow(functions.getSafeMoney(Double.parseDouble(args[4])));
-			} else {
-				floAuction.sendMessage("parse-error-invalid-buynow", ownerName, this);
-				return false;
-			}
-		} else {
-			setBuyNow(0);
-		}
-		if (getBuyNow() < 0) {
-			floAuction.sendMessage("parse-error-invalid-buynow", ownerName, this);
-			return false;
-		}
-		return true;
-	}
-	public long getMinBidIncrement() {
-		return minBidIncrement;
-	}
-	
-	public ItemStack getLotType() {
-		if (lot == null) {
-			return null;
-		}
-		return lot.getTypeStack();
-	}
-	
-	public int getLotQuantity() {
-		if (lot == null) {
-			return 0;
-		}
-		return lot.getQuantity();
-	}
-	public long getStartingBid() {
-		long effectiveStartingBid = startingBid;
-		if (effectiveStartingBid == 0) {
-			effectiveStartingBid = minBidIncrement; 
-		}
-		return effectiveStartingBid;
-	}
-	public AuctionBid getCurrentBid() {
-		return currentBid;
-	}
-	public String getOwner() {
-		return ownerName;
-	}
-	public int getRemainingTime() {
-		return countdown;
-	}
-	public int getTotalTime() {
-		return time;
-	}
-
-    public int addToRemainingTime(int i) {
-            countdown += i;
-            return countdown;
+public class Auction
+{
+    protected floAuction plugin;
+    private String[] args;
+    private String ownerName;
+    private AuctionScope scope;
+    public double extractedPreTax;
+    public double extractedPostTax;
+    private long startingBid;
+    private long minBidIncrement;
+    private long buyNow;
+    private int quantity;
+    private int time;
+    private boolean active;
+    private AuctionLot lot;
+    private AuctionBid currentBid;
+    public ArrayList<AuctionBid> sealedBids;
+    public boolean sealed;
+    public long nextTickTime;
+    private int countdown;
+    private int countdownTimer;
+    public MessageManager messageManager;
+    
+    
+    public AuctionScope getScope() {
+        return this.scope;
     }
-
-	public long getBuyNow() {
-		return buyNow;
-	}
-
-	public void setBuyNow(long buyNow) {
-		this.buyNow = buyNow;
-	}
+    
+    public Auction(final floAuction plugin, final Player auctionOwner, final String[] inputArgs, final AuctionScope scope, final boolean sealed, final MessageManager messageManager) {
+        this.extractedPreTax = 0.0;
+        this.extractedPostTax = 0.0;
+        this.startingBid = 0L;
+        this.minBidIncrement = 0L;
+        this.buyNow = 0L;
+        this.quantity = 0;
+        this.time = 0;
+        this.active = false;
+        this.currentBid = null;
+        this.sealedBids = new ArrayList<AuctionBid>();
+        this.sealed = false;
+        this.nextTickTime = 0L;
+        this.countdown = 0;
+        this.countdownTimer = 0;
+        this.messageManager = null;
+        this.ownerName = auctionOwner.getName();
+        this.args = functions.mergeInputArgs(auctionOwner.getName(), inputArgs, false);
+        this.plugin = plugin;
+        this.scope = scope;
+        this.sealed = sealed;
+        this.messageManager = messageManager;
+    }
+    
+    public Boolean start() {
+        final Player owner = Bukkit.getPlayer(this.ownerName);
+        if (plugin.arenaManager.isInArena(owner)) {
+            this.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "auction-fail-arena" }), this.ownerName, this);
+            return false;
+        }
+        final ItemStack typeStack = this.lot.getTypeStack();
+        double preAuctionTax = AuctionConfig.getDouble("auction-start-tax", this.scope);
+        final List<String> bannedItems = AuctionConfig.getStringList("banned-items", this.scope);
+        for (int i = 0; i < bannedItems.size(); ++i) {
+            if (items.isSameItem(typeStack, bannedItems.get(i))) {
+                this.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "auction-fail-banned" }), this.ownerName, this);
+                return false;
+            }
+        }
+        final Map<String, String> taxedItems = AuctionConfig.getStringStringMap("taxed-items", this.scope);
+        if (taxedItems != null) {
+            for (final Map.Entry<String, String> entry : taxedItems.entrySet()) {
+                if (items.isSameItem(typeStack, entry.getKey())) {
+                    final String itemTax = entry.getValue();
+                    if (itemTax.endsWith("a")) {
+                        try {
+                            preAuctionTax = Double.valueOf(itemTax.substring(0, itemTax.length() - 1));
+                        }
+                        catch (Exception e) {
+                            preAuctionTax = AuctionConfig.getDouble("auction-start-tax", this.scope);
+                        }
+                        break;
+                    }
+                    if (!itemTax.endsWith("%")) {
+                        try {
+                            preAuctionTax = Double.valueOf(itemTax);
+                            preAuctionTax *= this.quantity;
+                        }
+                        catch (Exception e) {
+                            preAuctionTax = AuctionConfig.getDouble("auction-start-tax", this.scope);
+                        }
+                        break;
+                    }
+                    break;
+                }
+            }
+        }
+        if (preAuctionTax > 0.0 && !floAuction.econ.has(this.ownerName, preAuctionTax)) {
+            this.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "auction-fail-start-tax" }), this.ownerName, this);
+            return false;
+        }
+        if (!this.lot.addItems(this.quantity, true)) {
+            this.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "auction-fail-insufficient-supply" }), this.ownerName, this);
+            return false;
+        }
+        if (preAuctionTax > 0.0 && floAuction.econ.has(this.ownerName, preAuctionTax)) {
+            floAuction.econ.withdrawPlayer(this.ownerName, preAuctionTax);
+            this.extractedPreTax = preAuctionTax;
+            this.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "auction-start-tax" }), this.ownerName, this);
+            final String taxDestinationUser = AuctionConfig.getString("deposit-tax-to-user", this.scope);
+            if (!taxDestinationUser.isEmpty()) {
+                floAuction.econ.depositPlayer(taxDestinationUser, preAuctionTax);
+            }
+        }
+        if (this.buyNow < this.getStartingBid()) {
+            this.buyNow = 0L;
+        }
+        final AuctionStartEvent auctionStartEvent = new AuctionStartEvent(owner, this);
+        Bukkit.getServer().getPluginManager().callEvent(auctionStartEvent);
+        if (auctionStartEvent.isCancelled()) {
+            this.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "auction-fail-blocked-by-other-plugin" }), this.ownerName, this);
+        }
+        else {
+            this.active = true;
+            this.messageManager.broadcastAuctionMessage(new CArrayList<String>(new String[] { "auction-start" }), this);
+            this.countdown = this.time;
+            this.countdownTimer = this.plugin.getServer().getScheduler().scheduleSyncRepeatingTask(this.plugin, (Runnable)new Runnable() {
+                @Override
+                public void run() {
+                    if (Auction.this.nextTickTime > System.currentTimeMillis()) {
+                        return;
+                    }
+                    Auction.this.nextTickTime += 1000L;
+                    final Auction val$thisAuction = Auction.this;
+                    Auction.access$1(val$thisAuction, val$thisAuction.countdown - 1);
+                    if (Auction.this.countdown <= 0) {
+                        Auction.this.end();
+                        return;
+                    }
+                    if (!AuctionConfig.getBoolean("suppress-countdown", Auction.this.scope)) {
+                        if (Auction.this.countdown < 4) {
+                            Auction.this.messageManager.broadcastAuctionMessage(new CArrayList<String>(new String[] { "timer-countdown-notification" }), Auction.this);
+                            return;
+                        }
+                        if (Auction.this.time >= 20 && Auction.this.countdown == Auction.this.time / 2) {
+                            Auction.this.messageManager.broadcastAuctionMessage(new CArrayList<String>(new String[] { "timer-countdown-notification" }), Auction.this);
+                        }
+                    }
+                }
+            }, 1L, 1L);
+            this.nextTickTime = System.currentTimeMillis() + 1000L;
+            this.info(null, true);
+        }
+        return this.active;
+    }
+    
+    public void info(final CommandSender sender, final boolean fullBroadcast) {
+        final List<String> messageKeys = new ArrayList<String>();
+        String playerName = null;
+        if (sender instanceof Player) {
+            playerName = ((Player)sender).getName();
+        }
+        final ItemStack itemType = this.getLotType();
+        Map<Enchantment, Integer> enchantments = (Map<Enchantment, Integer>)itemType.getEnchantments();
+        if (enchantments == null || enchantments.size() == 0) {
+            enchantments = items.getStoredEnchantments(itemType);
+        }
+        if (!this.active) {
+            if (sender instanceof Player) {
+                this.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "auction-info-no-auction" }), playerName, this);
+            }
+            return;
+        }
+        messageKeys.add("auction-info");
+        if (fullBroadcast) {
+            this.messageManager.broadcastAuctionMessage(messageKeys, this);
+        }
+        else {
+            this.messageManager.sendPlayerMessage(messageKeys, playerName, this);
+        }
+    }
+    
+    public void cancel() {
+        Bukkit.getServer().getPluginManager().callEvent(new AuctionEndEvent(this, true));
+        this.messageManager.broadcastAuctionMessage(new CArrayList<String>(new String[] { "auction-cancel" }), this);
+        if (this.lot != null) {
+            this.lot.cancelLot();
+        }
+        if (this.currentBid != null) {
+            this.currentBid.cancelBid();
+        }
+        this.dispose();
+    }
+    
+    public void confiscate(final Player authority) {
+        Bukkit.getServer().getPluginManager().callEvent(new AuctionEndEvent(this, true));
+        this.ownerName = authority.getName();
+        this.messageManager.broadcastAuctionMessage(new CArrayList<String>(new String[] { "confiscate-success" }), this);
+        if (this.lot != null) {
+            this.lot.winLot(authority.getName());
+        }
+        if (this.currentBid != null) {
+            this.currentBid.cancelBid();
+        }
+        this.dispose();
+    }
+    
+    public void end() {
+        final AuctionEndEvent auctionEndEvent = new AuctionEndEvent(this, false);
+        Bukkit.getServer().getPluginManager().callEvent(auctionEndEvent);
+        if (auctionEndEvent.isCancelled()) {
+            this.messageManager.broadcastAuctionMessage(new CArrayList<String>(new String[] { "auction-cancel" }), this);
+            if (this.lot != null) {
+                this.lot.cancelLot();
+            }
+            if (this.currentBid != null) {
+                this.currentBid.cancelBid();
+            }
+        }
+        else if (this.currentBid == null || this.lot == null) {
+            this.messageManager.broadcastAuctionMessage(new CArrayList<String>(new String[] { "auction-end-nobids" }), this);
+            if (this.lot != null) {
+                this.lot.cancelLot();
+            }
+            if (this.currentBid != null) {
+                this.currentBid.cancelBid();
+            }
+        }
+        else {
+            this.messageManager.broadcastAuctionMessage(new CArrayList<String>(new String[] { "auction-end" }), this);
+            this.lot.winLot(this.currentBid.getBidder());
+            this.currentBid.winBid();
+        }
+        this.dispose();
+    }
+    
+    private void dispose() {
+        this.plugin.getServer().getScheduler().cancelTask(this.countdownTimer);
+        this.sealed = false;
+        for (int i = 0; i < this.sealedBids.size(); ++i) {
+            this.sealedBids.get(i).cancelBid();
+        }
+        this.scope.setActiveAuction(null);
+    }
+    
+    public Boolean isValid() {
+        if (!this.isValidOwner()) {
+            return false;
+        }
+        if (!this.parseHeldItem()) {
+            return false;
+        }
+        if (!this.parseArgs()) {
+            return false;
+        }
+        if (!this.isValidAmount()) {
+            return false;
+        }
+        if (!this.isValidStartingBid()) {
+            return false;
+        }
+        if (!this.isValidIncrement()) {
+            return false;
+        }
+        if (!this.isValidTime()) {
+            return false;
+        }
+        if (!this.isValidBuyNow()) {
+            return false;
+        }
+        return true;
+    }
+    
+    public void Bid(final Player bidder, final String[] inputArgs) {
+    	
+        if (bidder == null) {
+            return;
+        }
+      
+        if(inputArgs.length == 0)
+        {
+        	
+        }
+    	
+        
+        final String playerName = bidder.getName();
+        if (plugin.arenaManager.isInArena(bidder)) {
+            this.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "bid-fail-arena" }), playerName, this);
+            return;
+        }
+        if (AuctionConfig.getBoolean("allow-buynow", this.scope) && inputArgs.length > 0 && inputArgs[0].equalsIgnoreCase("buy")) {
+            if (this.buyNow == 0L || (this.currentBid != null && this.currentBid.getBidAmount() >= this.buyNow)) {
+                this.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "bid-fail-buynow-expired" }), playerName, this);
+            }
+            else {
+                inputArgs[0] = Double.toString(functions.getUnsafeMoney(this.buyNow));
+                if (inputArgs[0].endsWith(".0")) {
+                    inputArgs[0] = inputArgs[0].substring(0, inputArgs[0].length() - 2);
+                }
+                final AuctionBid bid = new AuctionBid(this, bidder, inputArgs);
+                if (bid.getError() != null) {
+                    this.failBid(bid, bid.getError());
+                    return;
+                }
+                if (this.currentBid != null) {
+                    bid.raiseOwnBid(this.currentBid);
+                }
+                final AuctionBidEvent auctionBidEvent = new AuctionBidEvent(bidder, this, functions.getUnsafeMoney(bid.getBidAmount()), functions.getUnsafeMoney(bid.getMaxBidAmount()), true);
+                Bukkit.getServer().getPluginManager().callEvent(auctionBidEvent);
+                if (auctionBidEvent.isCancelled()) {
+                    this.failBid(bid, "bid-fail-blocked-by-other-plugin");
+                }
+                else {
+                    this.setNewBid(bid, null);
+                    this.end();
+                }
+            }
+            return;
+        }
+        final AuctionBid bid = new AuctionBid(this, bidder, inputArgs);
+        if (bid.getError() != null) {
+            this.failBid(bid, bid.getError());
+            return;
+        }
+        if (this.currentBid == null) {
+            if (bid.getBidAmount() < this.getStartingBid()) {
+                this.failBid(bid, "bid-fail-under-starting-bid");
+                return;
+            }
+            final AuctionBidEvent auctionBidEvent = new AuctionBidEvent(bidder, this, functions.getUnsafeMoney(bid.getBidAmount()), functions.getUnsafeMoney(bid.getMaxBidAmount()), true);
+            Bukkit.getServer().getPluginManager().callEvent(auctionBidEvent);
+            if (auctionBidEvent.isCancelled()) {
+                this.failBid(bid, "bid-fail-blocked-by-other-plugin");
+            }
+            else {
+                this.setNewBid(bid, "bid-success-no-challenger");
+            }
+        }
+        else {
+            final long previousBidAmount = this.currentBid.getBidAmount();
+            final long previousMaxBidAmount = this.currentBid.getMaxBidAmount();
+            if (this.currentBid.getBidder().equals(bidder.getName())) {
+                if (bid.raiseOwnBid(this.currentBid)) {
+                    final AuctionBidEvent auctionBidEvent2 = new AuctionBidEvent(bidder, this, functions.getUnsafeMoney(bid.getBidAmount()), functions.getUnsafeMoney(bid.getMaxBidAmount()), true);
+                    Bukkit.getServer().getPluginManager().callEvent(auctionBidEvent2);
+                    if (auctionBidEvent2.isCancelled()) {
+                        this.failBid(bid, "bid-fail-blocked-by-other-plugin");
+                    }
+                    else {
+                        this.setNewBid(bid, "bid-success-update-own-bid");
+                    }
+                }
+                else if (previousMaxBidAmount < this.currentBid.getMaxBidAmount()) {
+                    this.failBid(bid, "bid-success-update-own-maxbid");
+                }
+                else {
+                    this.failBid(bid, "bid-fail-already-current-bidder");
+                }
+                return;
+            }
+            AuctionBid winner = null;
+            AuctionBid loser = null;
+            if (AuctionConfig.getBoolean("use-old-bid-logic", this.scope)) {
+                if (bid.getMaxBidAmount() > this.currentBid.getMaxBidAmount()) {
+                    winner = bid;
+                    loser = this.currentBid;
+                }
+                else {
+                    winner = this.currentBid;
+                    loser = bid;
+                }
+                winner.raiseBid(Math.max(winner.getBidAmount(), Math.min(winner.getMaxBidAmount(), loser.getBidAmount() + this.minBidIncrement)));
+            }
+            else {
+                long baseBid = 0L;
+                if (bid.getBidAmount() >= this.currentBid.getBidAmount() + this.minBidIncrement) {
+                    baseBid = bid.getBidAmount();
+                }
+                else {
+                    baseBid = this.currentBid.getBidAmount() + this.minBidIncrement;
+                }
+                final Integer prevSteps = (int)Math.floor((this.currentBid.getMaxBidAmount() - baseBid + this.minBidIncrement) / this.minBidIncrement / 2.0);
+                final Integer newSteps = (int)Math.floor((bid.getMaxBidAmount() - baseBid) / this.minBidIncrement / 2.0);
+                if (newSteps >= prevSteps) {
+                    winner = bid;
+                    winner.raiseBid(baseBid + Math.max(0, prevSteps) * this.minBidIncrement * 2L);
+                    loser = this.currentBid;
+                }
+                else {
+                    winner = this.currentBid;
+                    winner.raiseBid(baseBid + Math.max(0, newSteps + 1) * this.minBidIncrement * 2L - this.minBidIncrement);
+                    loser = bid;
+                }
+            }
+            if (previousBidAmount <= winner.getBidAmount()) {
+                if (winner.equals(bid)) {
+                    final AuctionBidEvent auctionBidEvent3 = new AuctionBidEvent(bidder, this, functions.getUnsafeMoney(bid.getBidAmount()), functions.getUnsafeMoney(bid.getMaxBidAmount()), true);
+                    Bukkit.getServer().getPluginManager().callEvent(auctionBidEvent3);
+                    if (auctionBidEvent3.isCancelled()) {
+                        this.failBid(bid, "bid-fail-blocked-by-other-plugin");
+                    }
+                    else {
+                        this.setNewBid(bid, "bid-success-outbid");
+                    }
+                }
+                else if (previousBidAmount < winner.getBidAmount()) {
+                    if (!this.sealed && !AuctionConfig.getBoolean("broadcast-bid-updates", this.scope)) {
+                        this.messageManager.broadcastAuctionMessage(new CArrayList<String>(new String[] { "bid-auto-outbid" }), this);
+                    }
+                    this.failBid(bid, "bid-fail-auto-outbid");
+                }
+                else {
+                    if (!this.sealed) {
+                        this.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "bid-fail-too-low" }), bid.getBidder(), this);
+                    }
+                    this.failBid(bid, null);
+                }
+            }
+            else {
+                this.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "bid-fail-too-low" }), bid.getBidder(), this);
+                this.failBid(bid, null);//not previously here
+            }
+        }
+    }
+    
+    private void failBid(final AuctionBid attemptedBid, final String reason) {
+        attemptedBid.cancelBid();
+        if (this.sealed && (attemptedBid.getError() == null || attemptedBid.getError().isEmpty())) {
+            this.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "bid-success-sealed" }), attemptedBid.getBidder(), this);
+        }
+        else {
+            this.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { reason }), attemptedBid.getBidder(), this);
+        }
+    }
+    
+    private void setNewBid(final AuctionBid newBid, final String reason) {
+        final AuctionBid prevBid = this.currentBid;
+        if (AuctionConfig.getBoolean("expire-buynow-at-first-bid", this.scope)) {
+            this.buyNow = 0L;
+        }
+        if (this.currentBid != null) {
+            this.currentBid.cancelBid();
+        }
+        this.currentBid = newBid;
+        if (this.sealed) {
+            this.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "bid-success-sealed" }), newBid.getBidder(), this);
+        }
+        else if (AuctionConfig.getBoolean("broadcast-bid-updates", this.scope)) {
+            this.messageManager.broadcastAuctionMessage(new CArrayList<String>(new String[] { reason }), this);
+        }
+        else {
+            this.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { reason }), newBid.getBidder(), this);
+            if (prevBid != null && newBid.getBidder().equalsIgnoreCase(prevBid.getBidder())) {
+                this.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { reason }), prevBid.getBidder(), this);
+            }
+        }
+        AuctionParticipant.addParticipant(newBid.getBidder(), this.scope);
+        if (this.currentBid.getBidAmount() >= this.buyNow) {
+            this.buyNow = 0L;
+        }
+        if (!this.sealed && AuctionConfig.getBoolean("anti-snipe", this.scope) && this.getRemainingTime() <= AuctionConfig.getInt("anti-snipe-prevention-seconds", this.scope)) {
+            this.addToRemainingTime(AuctionConfig.getInt("anti-snipe-prevention-seconds", this.scope));
+            this.messageManager.broadcastAuctionMessage(new CArrayList<String>(new String[] { "anti-snipe-time-added" }), this);
+        }
+    }
+    
+    private Boolean parseHeldItem() {
+        final Player owner = Bukkit.getPlayer(this.ownerName);
+        if (this.lot != null) {
+            return true;
+        }
+        final ItemStack heldItem = owner.getItemInHand();
+        if (heldItem == null || heldItem.getAmount() == 0) {
+            this.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "auction-fail-hand-is-empty" }), this.ownerName, this);
+            return false;
+        }
+        this.lot = new AuctionLot(heldItem, this.ownerName);
+        final ItemStack itemType = this.lot.getTypeStack();
+        if (!AuctionConfig.getBoolean("allow-damaged-items", this.scope) && itemType.getType().getMaxDurability() > 0 && itemType.getDurability() > 0) {
+            this.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "auction-fail-damaged-item" }), this.ownerName, this);
+            this.lot = null;
+            return false;
+        }
+        String displayName = items.getDisplayName(itemType);
+        if (displayName == null) {
+            displayName = "";
+        }
+        if (!displayName.isEmpty() && !AuctionConfig.getBoolean("allow-renamed-items", this.scope)) {
+            this.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "auction-fail-renamed-item" }), this.ownerName, this);
+            this.lot = null;
+            return false;
+        }
+        final String[] lore = items.getLore(heldItem);
+        final List<String> bannedLore = AuctionConfig.getStringList("banned-lore", this.scope);
+        if (lore != null && bannedLore != null) {
+            for (int i = 0; i < bannedLore.size(); ++i) {
+                for (int j = 0; j < lore.length; ++j) {
+                    if (lore[j].toLowerCase().contains(bannedLore.get(i).toLowerCase())) {
+                        this.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "auction-fail-banned-lore" }), this.ownerName, this);
+                        this.lot = null;
+                        return false;
+                    }
+                }
+            }
+        }
+        return true;
+    }
+    
+    private Boolean parseArgs() {
+        if (!this.parseArgAmount()) {
+            return false;
+        }
+        if (!this.parseArgStartingBid()) {
+            return false;
+        }
+        if (!this.parseArgIncrement()) {
+            return false;
+        }
+        if (!this.parseArgTime()) {
+            return false;
+        }
+        if (!this.parseArgBuyNow()) {
+            return false;
+        }
+        return true;
+    }
+    
+    private Boolean isValidOwner() {
+        if (this.ownerName == null) {
+            this.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "auction-fail-invalid-owner" }), null, this);
+            return false;
+        }
+        return true;
+    }
+    
+    private Boolean isValidAmount() {
+        if (this.quantity <= 0) {
+            this.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "auction-fail-quantity-too-low" }), this.ownerName, this);
+            return false;
+        }
+        if (!items.hasAmount(this.ownerName, this.quantity, this.lot.getTypeStack())) {
+            this.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "auction-fail-insufficient-supply" }), this.ownerName, this);
+            return false;
+        }
+        return true;
+    }
+    
+    private Boolean isValidStartingBid() {
+        if (this.startingBid < 0L) {
+            this.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "auction-fail-starting-bid-too-low" }), this.ownerName, this);
+            return false;
+        }
+        if (this.startingBid > AuctionConfig.getSafeMoneyFromDouble("max-starting-bid", this.scope)) {
+            this.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "auction-fail-starting-bid-too-high" }), this.ownerName, this);
+            return false;
+        }
+        return true;
+    }
+    
+    private Boolean isValidIncrement() {
+        if (this.getMinBidIncrement() < AuctionConfig.getSafeMoneyFromDouble("min-bid-increment", this.scope)) {
+            this.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "auction-fail-increment-too-low" }), this.ownerName, this);
+            return false;
+        }
+        if (this.getMinBidIncrement() > AuctionConfig.getSafeMoneyFromDouble("max-bid-increment", this.scope)) {
+            this.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "auction-fail-increment-too-high" }), this.ownerName, this);
+            return false;
+        }
+        return true;
+    }
+    
+    private Boolean isValidBuyNow() {
+        if (this.getBuyNow() < 0L) {
+            this.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "auction-fail-buynow-too-low" }), this.ownerName, this);
+            return false;
+        }
+        if (this.getBuyNow() > AuctionConfig.getSafeMoneyFromDouble("max-buynow", this.scope)) {
+            this.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "auction-fail-buynow-too-high" }), this.ownerName, this);
+            return false;
+        }
+        return true;
+    }
+    
+    private Boolean isValidTime() {
+        if (this.time < AuctionConfig.getInt("min-auction-time", this.scope)) {
+            this.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "auction-fail-time-too-low" }), this.ownerName, this);
+            return false;
+        }
+        if (this.time > AuctionConfig.getInt("max-auction-time", this.scope)) {
+            this.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "auction-fail-time-too-high" }), this.ownerName, this);
+            return false;
+        }
+        return true;
+    }
+    
+    private Boolean parseArgAmount() {
+        if (this.quantity > 0) {
+            return true;
+        }
+        final ItemStack lotType = this.lot.getTypeStack();
+        if (this.args.length > 0) {
+            if (this.args[0].equalsIgnoreCase("this") || this.args[0].equalsIgnoreCase("hand")) {
+                this.quantity = lotType.getAmount();
+            }
+            else if (this.args[0].equalsIgnoreCase("all")) {
+                this.quantity = items.getAmount(this.ownerName, lotType);
+            }
+            else {
+                if (!this.args[0].matches("[0-9]{1,7}")) {
+                    this.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "parse-error-invalid-quantity" }), this.ownerName, this);
+                    return false;
+                }
+                this.quantity = Integer.parseInt(this.args[0]);
+            }
+        }
+        else {
+            this.quantity = lotType.getAmount();
+        }
+        if (this.quantity < 0) {
+            this.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "parse-error-invalid-quantity" }), this.ownerName, this);
+            return false;
+        }
+        return true;
+    }
+    
+    private Boolean parseArgStartingBid() {
+        if (this.startingBid > 0L) {
+            return true;
+        }
+        if (this.args.length > 1) {
+            if (this.args[1].isEmpty() || !this.args[1].matches(floAuction.decimalRegex)) {
+                this.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "parse-error-invalid-starting-bid" }), this.ownerName, this);
+                return false;
+            }
+            this.startingBid = functions.getSafeMoney(Double.parseDouble(this.args[1]));
+        }
+        else {
+            this.startingBid = AuctionConfig.getSafeMoneyFromDouble("default-starting-bid", this.scope);
+        }
+        if (this.startingBid < 0L) {
+            this.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "parse-error-invalid-starting-bid" }), this.ownerName, this);
+            return false;
+        }
+        return true;
+    }
+    
+    private Boolean parseArgIncrement() {
+        if (this.minBidIncrement > 0L) {
+            return true;
+        }
+        if (this.args.length > 2) {
+            if (this.args[2].isEmpty() || !this.args[2].matches(floAuction.decimalRegex)) {
+                this.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "parse-error-invalid-bid-increment" }), this.ownerName, this);
+                return false;
+            }
+            this.minBidIncrement = functions.getSafeMoney(Double.parseDouble(this.args[2]));
+        }
+        else {
+            this.minBidIncrement = AuctionConfig.getSafeMoneyFromDouble("default-bid-increment", this.scope);
+        }
+        if (this.minBidIncrement < 0L) {
+            this.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "parse-error-invalid-bid-increment" }), this.ownerName, this);
+            return false;
+        }
+        return true;
+    }
+    
+    private Boolean parseArgTime() {
+        if (this.time > 0) {
+            return true;
+        }
+        if (this.args.length > 3) {
+            if (!this.args[3].matches("[0-9]{1,7}")) {
+                this.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "parse-error-invalid-time" }), this.ownerName, this);
+                return false;
+            }
+            this.time = Integer.parseInt(this.args[3]);
+        }
+        else {
+            this.time = AuctionConfig.getInt("default-auction-time", this.scope);
+        }
+        if (this.time < 0) {
+            this.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "parse-error-invalid-time" }), this.ownerName, this);
+            return false;
+        }
+        return true;
+    }
+    
+    private Boolean parseArgBuyNow() {
+        if (this.sealed || !AuctionConfig.getBoolean("allow-buynow", this.scope)) {
+            this.buyNow = 0L;
+            return true;
+        }
+        if (this.getBuyNow() > 0L) {
+            return true;
+        }
+        if (this.args.length > 4) {
+            if (this.args[4].isEmpty() || !this.args[4].matches(floAuction.decimalRegex)) {
+                this.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "parse-error-invalid-buynow" }), this.ownerName, this);
+                return false;
+            }
+            this.buyNow = functions.getSafeMoney(Double.parseDouble(this.args[4]));
+        }
+        else {
+            this.buyNow = 0L;
+        }
+        if (this.getBuyNow() < 0L) {
+            this.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "parse-error-invalid-buynow" }), this.ownerName, this);
+            return false;
+        }
+        return true;
+    }
+    
+    public long getMinBidIncrement() {
+        return this.minBidIncrement;
+    }
+    
+    public ItemStack getLotType() {
+        if (this.lot == null) {
+            return null;
+        }
+        return this.lot.getTypeStack();
+    }
+    
+    public int getLotQuantity() {
+        if (this.lot == null) {
+            return 0;
+        }
+        return this.lot.getQuantity();
+    }
+    
+    public long getStartingBid() {
+        long effectiveStartingBid = this.startingBid;
+        if (effectiveStartingBid == 0L) {
+            effectiveStartingBid = this.minBidIncrement;
+        }
+        return effectiveStartingBid;
+    }
+    
+    public AuctionBid getCurrentBid() {
+        return this.currentBid;
+    }
+    
+    public String getOwner() {
+        return this.ownerName;
+    }
+    
+    public int getRemainingTime() {
+        return this.countdown;
+    }
+    
+    public int getTotalTime() {
+        return this.time;
+    }
+    
+    public int addToRemainingTime(final int secondsToAdd) {
+        return this.countdown += secondsToAdd;
+    }
+    
+    public long getBuyNow() {
+        return this.buyNow;
+    }
+    
+    public String getOwnerDisplayName() {
+        final Player ownerPlayer = Bukkit.getPlayer(this.ownerName);
+        if (ownerPlayer != null) {
+            return ownerPlayer.getDisplayName();
+        }
+        return this.ownerName;
+    }
+    
+    static void access$1(final Auction auction, final int countdown) {
+        auction.countdown = countdown;
+    }
 }

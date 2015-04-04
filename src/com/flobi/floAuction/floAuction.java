@@ -14,7 +14,6 @@ import java.io.ObjectInputStream;
 import java.io.ObjectOutput;
 import java.io.ObjectOutputStream;
 import java.io.OutputStream;
-import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
@@ -22,7 +21,6 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import java.util.Map.Entry;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -30,21 +28,13 @@ import net.milkbowl.vault.chat.Chat;
 import net.milkbowl.vault.economy.Economy;
 import net.milkbowl.vault.permission.Permission;
 
+import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
-import org.bukkit.Color;
-import org.bukkit.FireworkEffect;
-import org.bukkit.Material;
-import org.bukkit.FireworkEffect.Type;
 import org.bukkit.GameMode;
-import org.bukkit.Location;
-import org.bukkit.Server;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
-import org.bukkit.command.ConsoleCommandSender;
-import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.configuration.file.YamlConfiguration;
-import org.bukkit.enchantments.Enchantment;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -54,1430 +44,823 @@ import org.bukkit.event.player.PlayerCommandPreprocessEvent;
 import org.bukkit.event.player.PlayerGameModeChangeEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerMoveEvent;
-import org.bukkit.event.player.PlayerTeleportEvent.TeleportCause;
-import org.bukkit.inventory.ItemStack;
-import org.bukkit.plugin.Plugin;
+import org.bukkit.event.player.PlayerPortalEvent;
+import org.bukkit.event.player.PlayerTeleportEvent;
 import org.bukkit.plugin.RegisteredServiceProvider;
 import org.bukkit.plugin.java.JavaPlugin;
+import org.bukkit.scheduler.BukkitScheduler;
+import org.bukkit.util.FileUtil;
 
-import com.flobi.utility.functions;
-import com.flobi.utility.items;
+import com.flobi.floAuction.utility.CArrayList;
+import com.flobi.floAuction.utility.functions;
 
-public class floAuction extends JavaPlugin {
-	private static final Logger log = Logger.getLogger("Minecraft");
-	public static Auction publicAuction;
-
-	// Got to figure out a better way to store these:
-	public static long defaultStartingBid = 0;
-	public static long defaultBidIncrement = 100;
-	public static int defaultAuctionTime = 60;
-	public static long maxStartingBid = 10000;
-	public static long maxBuyNow = 10000;
-	public static long minIncrement = 1;
-	public static long maxIncrement = 100;
-	public static int maxTime = 60;
-	public static int minTime = 15;
-	public static int maxAuctionQueueLength = 2;
-	public static int minAuctionIntervalSecs = 10;
-	public static boolean allowBidOnOwn = false;
-	public static boolean useOldBidLogic = false;
-	public static boolean logAuctions = false;
-	public static boolean allowEarlyEnd = false;
-	public static int decimalPlaces = 2;
-	public static String decimalRegex = "^[0-9]{0,13}(\\.[0-9]{1," + decimalPlaces + "})?$";
-	public static boolean loadedDecimalFromVault = false;
-	public static boolean allowCreativeMode = false;
-	public static boolean allowDamagedItems = false;
-	private static File auctionLog = null;
-	private static long lastAuctionDestroyTime = 0;
-	private static boolean suspendAllAuctions = false;
-	public static boolean allowMaxBids = true;
-	public static boolean allowGamemodeChange = false;
-	public static boolean allowWorldChange = false;
-	public static List<String> bannedItems = new ArrayList<String>();
-	public static Map<String, String> taxedItems = new HashMap<String, String>();
-	public static double taxPerAuction = 0;
-	public static double taxPercentage = 0;
-	public static String taxDestinationUser = "";
-	public static Location currentBidPlayerLocation;
-	public static GameMode currentBidPlayerGamemode;
-	public static Location currentAuctionOwnerLocation;
-	public static GameMode currentAuctionOwnerGamemode;
-	public static int cancelPreventionSeconds = 15;
-	public static double cancelPreventionPercent = 50;
-    public static boolean antiSnipe = false;
-	public static int antiSnipePreventionSeconds = 15;
-	public static int antiSnipeExtensionSeconds = 15;
-	public static boolean useWhatIsIt = true;
-	
-	public static boolean allowSealedAuctions = true;
-	public static boolean allowUnsealedAuctions = true;
-	public static boolean broadCastBidUpdates = true;
-	public static boolean allowAutoBid = true;
-	public static boolean suppressCountdown = true;
-	public static boolean suppressAuctionStartInfo = true;
-	public static boolean allowRenamedItems = true;
-	public static boolean allowBuyNow = true;
-	public static boolean expireBuyNowOnFirstBid = false;
-	public static List<String> disabledCommands = new ArrayList<String>();
-	
-	public static List<Participant> auctionParticipants = new ArrayList<Participant>();
-	public static List<String> bannedLore = new ArrayList<String>();
-
-	public static Map<String, String[]> userSavedInputArgs = new HashMap<String, String[]>();
-
-	// Config files info.
-	private static File configFile = null;
-	private static InputStream defConfigStream;
-	public static FileConfiguration config = null;
-	private static File textConfigFile = null;
-	private static InputStream defTextConfigStream;
-	public static FileConfiguration textConfig = null;
-	private static YamlConfiguration defConfig = null;
-	private static YamlConfiguration defTextConfig = null;
-	private static File dataFolder;
-	private static ConsoleCommandSender console;
-	public static Server server;
-	public static int queueTimer;
-	public static ArrayList<Auction> auctionQueue = new ArrayList<Auction>();
-	
-	public static ArrayList<AuctionLot> orphanLots = new ArrayList<AuctionLot>();
-	public static ArrayList<String> voluntarilyDisabledUsers = new ArrayList<String>();
-	public static ArrayList<String> suspendedUsers = new ArrayList<String>();
-	
-	
-	public static void saveObject(Object arraylist, String filename) {
-    	File saveFile = new File(dataFolder, filename);
-    	
-    	try {
-			//use buffering
-    		if (saveFile.exists()) saveFile.delete();
-    		FileOutputStream file = new FileOutputStream(saveFile.getAbsolutePath());
-			OutputStream buffer = new BufferedOutputStream(file);
-			ObjectOutput output = new ObjectOutputStream(buffer);
-			try {
-				output.writeObject(arraylist);
-			}
-			finally {
-				output.close();
-			}
-  	    }  
-  	    catch(IOException ex){
-    		return;
-  	    }
-	}
-	@SuppressWarnings({ "unchecked", "finally" })
-	private static ArrayList<String> loadArrayListString(String filename) {
-    	File saveFile = new File(dataFolder, filename);
-    	ArrayList<String> importedObjects = new ArrayList<String>();
-    	try {
-			//use buffering
-			InputStream file = new FileInputStream(saveFile.getAbsolutePath());
-			InputStream buffer = new BufferedInputStream(file);
-			ObjectInput input = new ObjectInputStream (buffer);
-			importedObjects = (ArrayList<String>) input.readObject();
-			input.close();
-  	    }  
-		finally {
-  	    	return importedObjects;
-		}
-	}
-	
-	@SuppressWarnings({ "unchecked", "finally" })
-	private static Map<String, String[]> loadMapStringStringArray(String filename) {
-    	File saveFile = new File(dataFolder, filename);
-    	Map<String, String[]> importedObjects = new HashMap<String, String[]>();
-    	try {
-			//use buffering
-			InputStream file = new FileInputStream(saveFile.getAbsolutePath());
-			InputStream buffer = new BufferedInputStream(file);
-			ObjectInput input = new ObjectInputStream (buffer);
-			importedObjects = (Map<String, String[]>) input.readObject();
-			input.close();
-  	    }  
-		finally {
-  	    	return importedObjects;
-		}
-	}
-	
-	
-	@SuppressWarnings("unchecked")
-	private static ArrayList<AuctionLot> loadArrayListAuctionLot(String filename) {
-    	File saveFile = new File(dataFolder, filename);
-    	ArrayList<AuctionLot> importedObjects = new ArrayList<AuctionLot>();
-    	try {
-			//use buffering
-			InputStream file = new FileInputStream(saveFile.getAbsolutePath());
-			InputStream buffer = new BufferedInputStream(file);
-			ObjectInput input = new ObjectInputStream (buffer);
-			importedObjects = (ArrayList<AuctionLot>) input.readObject();
-			input.close();
-  	    } catch (IOException e) {
-			// This is okay, send a blank file.
-//			e.printStackTrace();
-		} catch (ClassNotFoundException e) {
-			// This is okay, send a blank file.
-//			e.printStackTrace();
-		}  
-		finally {
-		}
-    	return importedObjects;
-	}
-	
-	
-	// Eliminate orphan lots (i.e. try to give the items to a player again).
-	public static void killOrphan(Player player) {
-		if (orphanLots != null && orphanLots.size() > 0) {
-			Iterator<AuctionLot> iter = orphanLots.iterator();
-			while (iter.hasNext()) {
-				AuctionLot lot = iter.next();
-					if (lot.getOwner().equalsIgnoreCase(player.getName())) {
-					lot.cancelLot();
-					iter.remove();
-				}
-			}
-			saveObject(orphanLots, "orphanLots.ser");
-		}
-	}
-	
-
-	// Vault objects
-	public static Economy econ = null;
-    public static Permission perms = null;
-    public static Chat chat = null;
-
-	public void onEnable() {
-		server = getServer();
-		console = server.getConsoleSender();
-		dataFolder = getDataFolder();
-		defConfigStream = getResource("config.yml");
-		defTextConfigStream = getResource("language.yml");
-		final Plugin plugin = this;
-
-		setupEconomy();
-        setupPermissions();
-        setupChat();
-
-        loadConfig();
-		if (server.getPluginManager().getPlugin("WhatIsIt") == null) {
-			if (config.getBoolean("allow-inferior-item-name-logic")) {
-				log.log(Level.SEVERE, chatPrepClean(textConfig.getString("whatisit-recommended")));
-				useWhatIsIt = false;
-			} else {
-				log.log(Level.SEVERE, chatPrepClean(textConfig.getString("no-whatisit")));
-				server.getPluginManager().disablePlugin(this);
-	            return;
-			}
-		} else {
-			useWhatIsIt = true;
-		}
-		if (econ == null) {
-			log.log(Level.SEVERE, chatPrepClean(textConfig.getString("no-economy")));
-			server.getPluginManager().disablePlugin(this);
-            return;
-		}
-        
-        server.getPluginManager().registerEvents(new Listener() {
-            @EventHandler
-            public void playerJoin(PlayerJoinEvent event) {
-        	    floAuction.killOrphan(event.getPlayer());
-            }
-            @EventHandler
-            public void onPlayerChangedWorld(PlayerChangedWorldEvent event){
-            	if (allowWorldChange || publicAuction == null) return;
-            	
-                // Get player objects
-                final Player player = event.getPlayer();
-                if (publicAuction.getOwner().equalsIgnoreCase(player.getName()) && !player.getLocation().getWorld().equals(currentAuctionOwnerLocation.getWorld())) {
-                	// This is running as a timer because MultiInv is using HIGHEST priority and 
-                	// there's no way to send a cancel to it, so we have to go after the fact and
-                	// remove the user.
-                	getServer().getScheduler().scheduleSyncDelayedTask(plugin, new Runnable() {
-                		public void run() {
-    	                	player.teleport(currentAuctionOwnerLocation, TeleportCause.PLUGIN);
-                		}
-                	}, 1L);
-                	sendMessage("worldchange-fail-auction-owner", player, publicAuction, false);
-                } else if (publicAuction.getCurrentBid() != null && publicAuction.getCurrentBid().getBidder().equalsIgnoreCase(player.getName())
-                		 && !player.getLocation().getWorld().equals(currentBidPlayerLocation.getWorld())
-                		) {
-                	// This is running as a timer because MultiInv is using HIGHEST priority and 
-                	// there's no way to send a cancel to it, so we have to go after the fact and
-                	// remove the user.
-                	getServer().getScheduler().scheduleSyncDelayedTask(plugin, new Runnable() {
-                		public void run() {
-                        	player.teleport(currentBidPlayerLocation, TeleportCause.PLUGIN);
-                		}
-                	}, 1L);
-                	sendMessage("worldchange-fail-auction-bidder", player, publicAuction, false);
-                }
-            }
-            @EventHandler
-            public void onPlayerChangedGameMode(PlayerGameModeChangeEvent event){
-            	if (event.isCancelled()) return;
-            	if (allowGamemodeChange || publicAuction == null) return;
-            	
-                // Get player objects
-                Player player = event.getPlayer();
-                
-                if (publicAuction.getOwner().equalsIgnoreCase(player.getName())) {
-                	event.setCancelled(true);
-                	sendMessage("gamemodechange-fail-auction-owner", player, publicAuction, false);
-                } else if (publicAuction.getCurrentBid() != null && publicAuction.getCurrentBid().getBidder().equalsIgnoreCase(player.getName())) {
-                	event.setCancelled(true);
-                	sendMessage("gamemodechange-fail-auction-bidder", player, publicAuction, false);
-                }
-            }
-            @EventHandler(priority = EventPriority.LOWEST)
-            public void onPlayerPreprocessCommand(PlayerCommandPreprocessEvent event){
-            	if (event.isCancelled()) return;
-            	if (publicAuction == null && auctionQueue.size() == 0) return;
-            	if (event.getPlayer() == null) return;
-            	if (event.getMessage().isEmpty()) return;
-            	
-            	boolean isDisabledCommand = false;
-        		for (int i = 0; i < floAuction.disabledCommands.size(); i++) {
-        			String disabledCommand = floAuction.disabledCommands.get(i);
-        			if (disabledCommand.isEmpty()) continue;
-        			if (event.getMessage().toLowerCase().startsWith(disabledCommand.toLowerCase())) {
-        				isDisabledCommand = true;
-        				break;
-        			}
-        		}
-        		if (!isDisabledCommand) return;
-
-    			if (Participant.isParticipating(event.getPlayer().getName())) {
-	            	event.setCancelled(true);
-	            	sendMessage("disabled-command", event.getPlayer(), publicAuction, false);
-    				return;
-    			}
-            }
-        	@EventHandler()
-        	public void onPlayerMove(PlayerMoveEvent event) {
-        		if (event.isCancelled()) return;
-        		Participant.forceLocation(event.getPlayer().getName());
-        	}
-        }, this);
-		
-		queueTimer = getServer().getScheduler().scheduleSyncRepeatingTask(this, new Runnable() {
-		    public void run() {
-		    	checkAuctionQueue();
-		    }
-		}, 20L, 20L);
-		
-		orphanLots = loadArrayListAuctionLot("orphanLots.ser");
-		voluntarilyDisabledUsers = loadArrayListString("voluntarilyDisabledUsers.ser");
-		suspendedUsers = loadArrayListString("suspendedUsers.ser");
-		userSavedInputArgs = loadMapStringStringArray("userSavedInputArgs.ser");
-
-        // Load up the Plugin metrics
+public class floAuction extends JavaPlugin implements Listener
+{
+    private static final Logger log;
+    public static int decimalPlaces;
+    public static String decimalRegex;
+    public static boolean loadedDecimalFromVault;
+    private static File auctionLog;
+    private static boolean suspendAllAuctions;
+    public static boolean useWhatIsIt;
+    public static List<AuctionParticipant> auctionParticipants;
+    public static Map<String, String[]> userSavedInputArgs;
+    public static FileConfiguration config;
+    public static FileConfiguration textConfig;
+    private static File dataFolder;
+    private static int queueTimer;
+    static floAuction plugin;
+    private static int playerScopeCheckTimer;
+    static Map<String, String> playerScopeCache;
+    private static ArrayList<AuctionLot> orphanLots;
+    private static ArrayList<String> voluntarilyDisabledUsers;
+    private static ArrayList<String> suspendedUsers;
+    private static MessageManager messageManager;
+    public static Economy econ;
+    public static Permission perms;
+    public static Chat chat;
+    public ArenaManager arenaManager;
+    
+    static {
+        log = Logger.getLogger("Minecraft");
+        floAuction.decimalPlaces = 0;
+        floAuction.decimalRegex = "^[0-9]{0,13}(\\.[0-9]{1," + floAuction.decimalPlaces + "})?$";
+        floAuction.loadedDecimalFromVault = false;
+        floAuction.auctionLog = null;
+        floAuction.suspendAllAuctions = false;
+        floAuction.useWhatIsIt = true;
+        floAuction.auctionParticipants = new ArrayList<AuctionParticipant>();
+        floAuction.userSavedInputArgs = new HashMap<String, String[]>();
+        floAuction.config = null;
+        floAuction.textConfig = null;
+        floAuction.playerScopeCache = new HashMap<String, String>();
+        floAuction.orphanLots = new ArrayList<AuctionLot>();
+        floAuction.voluntarilyDisabledUsers = new ArrayList<String>();
+        floAuction.suspendedUsers = new ArrayList<String>();
+        floAuction.messageManager = new AuctionMessageManager();
+        floAuction.econ = null;
+        floAuction.perms = null;
+        floAuction.chat = null;
+    }
+    
+    public static void saveOrphanLot(final AuctionLot auctionLot) {
+        floAuction.orphanLots.add(auctionLot);
+        saveObject(floAuction.orphanLots, "orphanLots.ser");
+    }
+    
+    private static void saveObject(final Object object, final String filename) {
+        final File saveFile = new File(floAuction.dataFolder, filename);
         try {
-            MetricsLite metrics = new MetricsLite(this);
-            metrics.start();
-        } catch (IOException e) {
-            // Failed to submit the stats :-(
+            if (saveFile.exists()) {
+                saveFile.delete();
+            }
+            final FileOutputStream file = new FileOutputStream(saveFile.getAbsolutePath());
+            final OutputStream buffer = new BufferedOutputStream(file);
+            final ObjectOutput output = new ObjectOutputStream(buffer);
+            try {
+                output.writeObject(object);
+            }
+            finally {
+                output.close();
+            }
+            output.close();
         }
-		sendMessage("plugin-enabled", console, null, false);
-		
-	}
-    /**
-	 * Loads config.yml and language.yml configuration files.
-	 */
+        catch (IOException ex) {}
+    }
+    
+    private static ArrayList<String> loadArrayListString(final String filename) throws ClassNotFoundException, IOException {
+        final File saveFile = new File(floAuction.dataFolder, filename);
+        ArrayList<String> importedObjects = new ArrayList<String>();
+        try {
+            final InputStream file = new FileInputStream(saveFile.getAbsolutePath());
+            final InputStream buffer = new BufferedInputStream(file);
+            final ObjectInput input = new ObjectInputStream(buffer);
+            importedObjects = (ArrayList<String>)input.readObject();
+            input.close();
+        }
+        finally {}
+        return importedObjects;
+    }
+    
+    private static Map<String, String[]> loadMapStringStringArray(final String filename) throws IOException, ClassNotFoundException {
+        final File saveFile = new File(floAuction.dataFolder, filename);
+        Map<String, String[]> importedObjects = new HashMap<String, String[]>();
+        try {
+            final InputStream file = new FileInputStream(saveFile.getAbsolutePath());
+            final InputStream buffer = new BufferedInputStream(file);
+            final ObjectInput input = new ObjectInputStream(buffer);
+            importedObjects = (Map<String, String[]>)input.readObject();
+            input.close();
+        }
+        finally {}
+        return importedObjects;
+    }
+    
+    private static ArrayList<AuctionLot> loadArrayListAuctionLot(final String filename) {
+        final File saveFile = new File(floAuction.dataFolder, filename);
+        ArrayList<AuctionLot> importedObjects = new ArrayList<AuctionLot>();
+        try {
+            final InputStream file = new FileInputStream(saveFile.getAbsolutePath());
+            final InputStream buffer = new BufferedInputStream(file);
+            final ObjectInput input = new ObjectInputStream(buffer);
+            importedObjects = (ArrayList<AuctionLot>)input.readObject();
+            input.close();
+        }
+        catch (IOException ex) {}
+        catch (ClassNotFoundException ex2) {}
+        return importedObjects;
+    }
+    
+    public static void killOrphan(final Player player) {
+        if (floAuction.orphanLots != null && floAuction.orphanLots.size() > 0) {
+            final Iterator<AuctionLot> iter = floAuction.orphanLots.iterator();
+            while (iter.hasNext()) {
+                final AuctionLot lot = iter.next();
+                if (lot.getOwner().equalsIgnoreCase(player.getName())) {
+                    lot.cancelLot();
+                    iter.remove();
+                }
+            }
+            saveObject(floAuction.orphanLots, "orphanLots.ser");
+        }
+    }
+    
+    public void onEnable() {
+        floAuction.dataFolder = this.getDataFolder();
+        floAuction.plugin = this;
+        floAuction.auctionLog = new File(floAuction.dataFolder, "auctions.log");
+        loadConfig();
+        if (Bukkit.getPluginManager().getPlugin("WhatIsIt") == null) {
+            if (!floAuction.config.getBoolean("allow-inferior-item-name-logic")) {
+                this.logToBukkit("plugin-disabled-no-whatisit", Level.SEVERE);
+                Bukkit.getPluginManager().disablePlugin(this);
+                return;
+            }
+            this.logToBukkit("recommended-whatisit", Level.WARNING);
+            floAuction.useWhatIsIt = false;
+        }
+        else {
+            floAuction.useWhatIsIt = true;
+        }
+        if (Bukkit.getPluginManager().getPlugin("Vault") == null) {
+            this.logToBukkit("plugin-disabled-no-vault", Level.SEVERE);
+            Bukkit.getPluginManager().disablePlugin(this);
+            return;
+        }
+        this.setupEconomy();
+        this.setupPermissions();
+        this.setupChat();
+        if (floAuction.econ == null) {
+            this.logToBukkit("plugin-disabled-no-economy", Level.SEVERE);
+            Bukkit.getPluginManager().disablePlugin(this);
+            return;
+        }
+        this.arenaManager = new ArenaManager(null, null, null);
+        arenaManager.loadArenaListeners(this);
+        Bukkit.getPluginManager().registerEvents(this, this);
+    }
+            @EventHandler
+            public void playerJoin(final PlayerJoinEvent event) {
+                final Player player = event.getPlayer();
+                floAuction.killOrphan(player);
+                AuctionScope.sendWelcomeMessage(player, true);
+            }
+            
+            @EventHandler
+            public void onPlayerChangedWorld(final PlayerChangedWorldEvent event) {
+                AuctionParticipant.forceLocation(event.getPlayer().getName(), null);
+            }
+            
+            @EventHandler
+            public void onPlayerChangedGameMode(final PlayerGameModeChangeEvent event) {
+                if (event.isCancelled()) {
+                    return;
+                }
+                final Player player = event.getPlayer();
+                final String playerName = player.getName();
+                final AuctionScope playerScope = AuctionScope.getPlayerScope(player);
+                final Auction playerAuction = floAuction.getPlayerAuction(player);
+                if (AuctionConfig.getBoolean("allow-gamemode-change", playerScope) || playerAuction == null) {
+                    return;
+                }
+                if (AuctionParticipant.isParticipating(playerName)) {
+                    event.setCancelled(true);
+                    floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "gamemodechange-fail-participating" }), playerName, (AuctionScope)null);
+                }
+            }
+            
+            @EventHandler(priority = EventPriority.LOWEST)
+            public void onPlayerPreprocessCommand(final PlayerCommandPreprocessEvent event) {
+                if (event.isCancelled()) {
+                    return;
+                }
+                final Player player = event.getPlayer();
+                if (player == null) {
+                    return;
+                }
+                final String playerName = player.getName();
+                final String message = event.getMessage();
+                if (message == null || message.isEmpty()) {
+                    return;
+                }
+                final AuctionScope playerScope = AuctionScope.getPlayerScope(player);
+                List<String> disabledCommands = AuctionConfig.getStringList("disabled-commands-inscope", playerScope);
+                for (int i = 0; i < disabledCommands.size(); ++i) {
+                    final String disabledCommand = disabledCommands.get(i);
+                    if (!disabledCommand.isEmpty()) {
+                        if (message.toLowerCase().startsWith(disabledCommand.toLowerCase())) {
+                            event.setCancelled(true);
+                            floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "disabled-command-inscope" }), playerName, (AuctionScope)null);
+                            return;
+                        }
+                    }
+                }
+                if (playerScope == null) {
+                    return;
+                }
+                if (!AuctionParticipant.isParticipating(player.getName())) {
+                    return;
+                }
+                disabledCommands = AuctionConfig.getStringList("disabled-commands-participating", playerScope);
+                for (int i = 0; i < disabledCommands.size(); ++i) {
+                    final String disabledCommand = disabledCommands.get(i);
+                    if (!disabledCommand.isEmpty()) {
+                        if (message.toLowerCase().startsWith(disabledCommand.toLowerCase())) {
+                            event.setCancelled(true);
+                            floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "disabled-command-participating" }), playerName, (AuctionScope)null);
+                            return;
+                        }
+                    }
+                }
+            }
+            
+            @EventHandler
+            public void onPlayerMove(final PlayerMoveEvent event) {
+                if (event.isCancelled()) {
+                    return;
+                }
+                AuctionParticipant.forceLocation(event.getPlayer().getName(), event.getTo());
+            }
+            
+            @EventHandler
+            public void onPlayerTeleport(final PlayerTeleportEvent event) {
+                if (event.isCancelled()) {
+                    return;
+                }
+                if (!AuctionParticipant.checkTeleportLocation(event.getPlayer().getName(), event.getTo())) {
+                    event.setCancelled(true);
+                }
+            }
+            
+            @EventHandler
+            public void onPlayerPortalEvent(final PlayerPortalEvent event) {
+                if (event.isCancelled()) {
+                    return;
+                }
+                if (!AuctionParticipant.checkTeleportLocation(event.getPlayer().getName(), event.getTo())) {
+                    event.setCancelled(true);
+                }
+  
+
+        final BukkitScheduler bukkitScheduler = this.getServer().getScheduler();
+        if (floAuction.queueTimer > 0) {
+            bukkitScheduler.cancelTask(floAuction.queueTimer);
+        }
+        floAuction.queueTimer = bukkitScheduler.scheduleSyncRepeatingTask(this, (Runnable)new Runnable() {
+            @Override
+            public void run() {
+                AuctionScope.checkAuctionQueue();
+            }
+        }, 20L, 20L);
+        final long playerScopeCheckInterval = floAuction.config.getLong("auctionscope-change-check-interval");
+        if (floAuction.playerScopeCheckTimer > 0) {
+            bukkitScheduler.cancelTask(floAuction.playerScopeCheckTimer);
+        }
+        if (playerScopeCheckInterval > 0L) {
+            floAuction.playerScopeCheckTimer = bukkitScheduler.scheduleSyncRepeatingTask(this, new Runnable() {
+                @Override
+                public void run() {
+                    AuctionScope.sendFairwellMessages();
+                    AuctionScope.sendWelcomeMessages();
+                }
+            }, playerScopeCheckInterval, playerScopeCheckInterval);
+        }
+        floAuction.orphanLots = loadArrayListAuctionLot("orphanLots.ser");
+        try {
+		floAuction.voluntarilyDisabledUsers = loadArrayListString("voluntarilyDisabledUsers.ser");
+        floAuction.suspendedUsers = loadArrayListString("suspendedUsers.ser");
+        floAuction.userSavedInputArgs = loadMapStringStringArray("userSavedInputArgs.ser");
+        } catch (ClassNotFoundException | IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+
+        floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "plugin-enabled" }), null, (AuctionScope)null);
+    }
+    
     private static void loadConfig() {
-		if (configFile == null) {
-	    	configFile = new File(dataFolder, "config.yml");
-	    }
-		if (auctionLog == null) {
-	    	auctionLog = new File(dataFolder, "auctions.log");
-		}
-		config = null;
-	    config = YamlConfiguration.loadConfiguration(configFile);
-	 
-	    // Look for defaults in the jar
-	    if (defConfigStream != null) {
-	        defConfig = YamlConfiguration.loadConfiguration(defConfigStream);
-	        defConfigStream = null;
-	    }
-	    if (defConfig != null) {
-	    	config.setDefaults(defConfig);
-	    }
-	    
-	    if (textConfigFile == null) {
-	    	textConfigFile = new File(dataFolder, "language.yml");
-	    }
-	    textConfig = null;
-	    textConfig = YamlConfiguration.loadConfiguration(textConfigFile);
-	 
-	    // Look for defaults in the jar
-	    if (defTextConfigStream != null) {
-	        defTextConfig = YamlConfiguration.loadConfiguration(defTextConfigStream);
-	        defTextConfigStream = null;
-	    }
-	    if (defTextConfig != null) {
-	        textConfig.setDefaults(defTextConfig);
-	    }
-	    
-	    logAuctions = config.getBoolean("log-auctions");
-	    
-	    decimalPlaces = config.getInt("decimal-places");
-	    if (econ != null && econ.isEnabled()) {
-	    	if (econ.fractionalDigits() >= 0) {
-				decimalPlaces = econ.fractionalDigits();
-	    	}
-	    	loadedDecimalFromVault = true;
-	    }
-		config.set("decimal-places", decimalPlaces);
-		if (decimalPlaces < 1) {
-			decimalRegex = "^[0-9]{1,13}$";
-		} else if (decimalPlaces == 1) {
-			decimalRegex = "^[0-9]{0,13}(\\.[0-9])?$";
-		} else {
-			decimalRegex = "^[0-9]{0,13}(\\.[0-9]{1," + decimalPlaces + "})?$";
-		}
-
-		defaultStartingBid = functions.getSafeMoney(config.getDouble("default-starting-bid"));
-		defaultBidIncrement = functions.getSafeMoney(config.getDouble("default-bid-increment"));
-		defaultAuctionTime = config.getInt("default-auction-time");
-		maxStartingBid = functions.getSafeMoney(config.getDouble("max-starting-bid"));
-		maxBuyNow = functions.getSafeMoney(config.getDouble("max-buynow"));
-		minIncrement = functions.getSafeMoney(config.getDouble("min-bid-increment"));
-		maxIncrement = functions.getSafeMoney(config.getDouble("max-bid-increment"));
-		maxTime = config.getInt("max-auction-time");
-		minTime = config.getInt("min-auction-time");
-		maxAuctionQueueLength = config.getInt("max-auction-queue-length");
-		minAuctionIntervalSecs = config.getInt("min-auction-interval-secs");
-		allowBidOnOwn = config.getBoolean("allow-bid-on-own-auction");
-		useOldBidLogic = config.getBoolean("use-old-bid-logic");
-		allowEarlyEnd = config.getBoolean("allow-early-end");
-		allowCreativeMode = config.getBoolean("allow-gamemode-creative");
-		allowDamagedItems = config.getBoolean("allow-damaged-items");
-		bannedItems = config.getStringList("banned-items");
-		taxPerAuction = config.getDouble("auction-start-tax");
-		taxPercentage = config.getDouble("auction-end-tax-percent");
-		allowMaxBids = config.getBoolean("allow-max-bids");
-		allowGamemodeChange = config.getBoolean("allow-gamemode-change");
-		allowWorldChange = config.getBoolean("allow-world-change");
-		taxDestinationUser = config.getString("deposit-tax-to-user");
-		cancelPreventionSeconds = config.getInt("cancel-prevention-seconds");
-		cancelPreventionPercent = config.getDouble("cancel-prevention-percent");
-        antiSnipe = config.getBoolean("anti-snipe");
-        antiSnipePreventionSeconds = config.getInt("anti-snipe-prevention-seconds");
-        antiSnipeExtensionSeconds = config.getInt("anti-snipe-extension-seconds");
-		disabledCommands = config.getStringList("disabled-commands");
-		
-        allowSealedAuctions = config.getBoolean("allow-sealed-auctions");
-        if (allowSealedAuctions) {
-        	allowUnsealedAuctions = config.getBoolean("allow-unsealed-auctions");
-        } else {
-        	allowUnsealedAuctions = true;
+        File configFile = new File(floAuction.dataFolder, "config.yml");
+        InputStream defConfigStream = floAuction.plugin.getResource("config.yml");
+        File textConfigFile = new File(floAuction.dataFolder, "language.yml");
+        InputStream defTextConfigStream = floAuction.plugin.getResource("language.yml");
+        YamlConfiguration defConfig = null;
+        YamlConfiguration defTextConfig = null;
+        floAuction.config = null;
+        floAuction.config = (FileConfiguration)YamlConfiguration.loadConfiguration(configFile);
+        if (defConfigStream != null) {
+            defConfig = YamlConfiguration.loadConfiguration(defConfigStream);
+            defConfigStream = null;
         }
-        
-        allowRenamedItems = config.getBoolean("allow-renamed-items");
-        allowBuyNow = config.getBoolean("allow-buynow");
-        expireBuyNowOnFirstBid = config.getBoolean("expire-buynow-at-first-bid");
-
-        broadCastBidUpdates = config.getBoolean("broadcast-bid-updates");
-        allowAutoBid = config.getBoolean("allow-auto-bid");
-        suppressCountdown = config.getBoolean("suppress-countdown");
-        suppressAuctionStartInfo = config.getBoolean("suppress-auction-start-info");
-        
-
-		ConfigurationSection taxedItemsSection = config.getConfigurationSection("taxed-items");
-		taxedItems = new HashMap<String, String>();
-		if (taxedItemsSection != null) {
-			for (String itemCode : taxedItemsSection.getKeys(false)) {
-				taxedItems.put(itemCode, taxedItemsSection.getString(itemCode));
-			}
-		}
-		
-		Participant.setAuctionHouseBox(
-					config.getString("auctionhouse-world"), 
-					config.getDouble("auctionhouse-min-x"), 
-					config.getDouble("auctionhouse-min-y"), 
-					config.getDouble("auctionhouse-min-z"), 
-					config.getDouble("auctionhouse-max-x"), 
-					config.getDouble("auctionhouse-max-y"), 
-					config.getDouble("auctionhouse-max-z"));
-        
-		bannedLore = config.getStringList("banned-lore");
-		
-        // Update all values to include defaults which may be new.
-		
-		FileConfiguration cleanConfig = new YamlConfiguration();
-		Map<String, Object> configValues = config.getDefaults().getValues(true);
-		for (Map.Entry<String, Object> configEntry : configValues.entrySet()) {
-			cleanConfig.set(configEntry.getKey(), config.get(configEntry.getKey()));
-		}
-		config = cleanConfig;
-
-    	try {
-    		config.save(configFile);
-		} catch(IOException ex) {
-			log.severe("Cannot save config.yml");
-		}
-    	defConfig = null;
-	    configFile = null;
-
-	    
-		FileConfiguration cleanTextConfig = new YamlConfiguration();
-		Map<String, Object> textConfigValues = textConfig.getDefaults().getValues(false);
-		for (Map.Entry<String, Object> textConfigEntry : textConfigValues.entrySet()) {
-			cleanTextConfig.set(textConfigEntry.getKey(), textConfig.get(textConfigEntry.getKey()));
-		}
-		textConfig = cleanTextConfig;
-
-		try {
-    		textConfig.save(textConfigFile);
-		} catch(IOException ex) {
-			log.severe("Cannot save language.yml");
-		}
+        if (defConfig != null) {
+            floAuction.config.setDefaults(defConfig);
+        }
+        floAuction.textConfig = null;
+        if (floAuction.config.contains("suppress-auction-start-info")) {
+            FileUtil.copy(configFile, new File(floAuction.dataFolder, "config.v2-backup.yml"));
+            FileUtil.copy(textConfigFile, new File(floAuction.dataFolder, "language.v2-backup.yml"));
+            final String houseWorld = floAuction.config.getString("auctionhouse-world");
+            if (houseWorld != null && !houseWorld.isEmpty()) {
+                final YamlConfiguration house = new YamlConfiguration();
+                house.set("name", (Object)"Auction House");
+                house.set("type", (Object)"house");
+                house.set("house-world", (Object)houseWorld);
+                house.set("house-min-x", floAuction.config.get("auctionhouse-min-x"));
+                house.set("house-min-y", floAuction.config.get("auctionhouse-min-y"));
+                house.set("house-min-z", floAuction.config.get("auctionhouse-min-z"));
+                house.set("house-max-x", floAuction.config.get("auctionhouse-max-x"));
+                house.set("house-max-y", floAuction.config.get("auctionhouse-max-y"));
+                house.set("house-max-z", floAuction.config.get("auctionhouse-max-z"));
+                final YamlConfiguration scopes = new YamlConfiguration();
+                scopes.set("house", (Object)house);
+                floAuction.config.set("auction-scopes", (Object)scopes);
+            }
+            floAuction.config.set("disabled-commands-participating", floAuction.config.get("disabled-commands"));
+            floAuction.textConfig = (FileConfiguration)new YamlConfiguration();
+        }
+        else {
+            floAuction.textConfig = (FileConfiguration)YamlConfiguration.loadConfiguration(textConfigFile);
+        }
+        if (defTextConfigStream != null) {
+            defTextConfig = YamlConfiguration.loadConfiguration(defTextConfigStream);
+            defTextConfigStream = null;
+        }
+        if (defTextConfig != null) {
+            floAuction.textConfig.setDefaults(defTextConfig);
+        }
+        final FileConfiguration cleanConfig = (FileConfiguration)new YamlConfiguration();
+        final Map<String, Object> configValues = (Map<String, Object>)floAuction.config.getDefaults().getValues(false);
+        for (final Map.Entry<String, Object> configEntry : configValues.entrySet()) {
+            cleanConfig.set((String)configEntry.getKey(), floAuction.config.get((String)configEntry.getKey()));
+        }
+        floAuction.config = cleanConfig;
+        try {
+            floAuction.config.save(configFile);
+        }
+        catch (IOException ex) {
+            floAuction.log.severe("Cannot save config.yml");
+        }
+        defConfig = null;
+        configFile = null;
+        if (floAuction.textConfig.contains("plogin-reload-fail-permissions")) {
+            floAuction.textConfig.set("plugin-reload-fail-permissions", floAuction.textConfig.get("plogin-reload-fail-permissions"));
+        }
+        final FileConfiguration cleanTextConfig = (FileConfiguration)new YamlConfiguration();
+        final Map<String, Object> textConfigValues = (Map<String, Object>)floAuction.textConfig.getDefaults().getValues(false);
+        for (final Map.Entry<String, Object> textConfigEntry : textConfigValues.entrySet()) {
+            cleanTextConfig.set((String)textConfigEntry.getKey(), floAuction.textConfig.get((String)textConfigEntry.getKey()));
+        }
+        floAuction.textConfig = cleanTextConfig;
+        if (floAuction.textConfig.getString("bid-fail-under-starting-bid") != null && floAuction.textConfig.getString("bid-fail-under-starting-bid").equals("&6The bidding must start at %A8.")) {
+            floAuction.textConfig.set("bid-fail-under-starting-bid", (Object)"&6The bidding must start at %A4.");
+        }
+        try {
+            floAuction.textConfig.save(textConfigFile);
+        }
+        catch (IOException ex2) {
+            floAuction.log.severe("Cannot save language.yml");
+        }
         defTextConfig = null;
-	    textConfigFile = null;
-	    
-	    if (maxStartingBid == 0) {
-	    	maxStartingBid = 100000000000000000L;
-	    }
-	    
-	    if (maxBuyNow == 0) {
-	    	maxBuyNow = 100000000000000000L;
-	    }
-    }
-	public void onDisable() {
-		if (publicAuction != null) publicAuction.cancel();
-		getServer().getScheduler().cancelTask(queueTimer);
-		sendMessage("plugin-disabled", console, null, false);
-	}
-	public void detachAuction(Auction auction) {
-		publicAuction = null;
-		lastAuctionDestroyTime = System.currentTimeMillis();
-		checkAuctionQueue();
-	}
-	/**
-	 * Prepares chat, prepending prefix and processing colors.
-	 * 
-	 * @param String message to prepare
-	 * @return String prepared message
-	 */
-    private static String chatPrep(String message) {
-    	message = textConfig.getString("chat-prefix") + message;
-    	message = ChatColor.translateAlternateColorCodes('&', message);
-    	return message;
-    }
-    private static String chatPrepClean(String message) {
-    	message = textConfig.getString("chat-prefix") + message;
-    	message = ChatColor.translateAlternateColorCodes('&', message);
-    	message = ChatColor.stripColor(message);
-    	return message;
+        textConfigFile = null;
+        AuctionScope.setupScopeList(floAuction.config.getConfigurationSection("auction-scopes"), floAuction.dataFolder);
     }
     
-    public void queueAuction(Auction auctionToQueue, Player player, Auction currentAuction) {
-		String playerName = player.getName();
-
-		if (currentAuction == null) {
-			// Queuing because of interval not yet timed out.
-			// Allow a queue of 1 to override if 0 for this condition.
-	    	if (Math.max(maxAuctionQueueLength, 1) <= auctionQueue.size()) {
-				sendMessage("auction-queue-fail-full", player, currentAuction, false);
-				return;
-			}
-		} else {
-	    	if (maxAuctionQueueLength <= 0) {
-				sendMessage("auction-fail-auction-exists", player, currentAuction, false);
-				return;
-			}
-			if (currentAuction.getOwner().equalsIgnoreCase(playerName)) {
-				sendMessage("auction-queue-fail-current-auction", player, currentAuction, false);
-				return;
-			}
-			if (maxAuctionQueueLength <= auctionQueue.size()) {
-				sendMessage("auction-queue-fail-full", player, currentAuction, false);
-				return;
-			}
-		}
-		for(int i = 0; i < auctionQueue.size(); i++) {
-			if (auctionQueue.get(i) != null) {
-				Auction queuedAuction = auctionQueue.get(i);
-				if (queuedAuction.getOwner().equalsIgnoreCase(playerName)) {
-					sendMessage("auction-queue-fail-in-queue", player, currentAuction, false);
-					return;
-				}
-			}
-		}
-		if ((auctionQueue.size() == 0 && System.currentTimeMillis() - lastAuctionDestroyTime >= minAuctionIntervalSecs * 1000) || auctionToQueue.isValid()) {
-			auctionQueue.add(auctionToQueue);
-			Participant.addParticipant(playerName);
-			checkAuctionQueue();
-			if (auctionQueue.contains(auctionToQueue)) {
-				sendMessage("auction-queue-enter", player, currentAuction, false);
-			}
-		}
-    }
-	private void checkAuctionQueue() {
-		if (publicAuction != null) {
-			return;
-		}
-		if (System.currentTimeMillis() - lastAuctionDestroyTime < minAuctionIntervalSecs * 1000) {
-			return;
-		}
-		if (auctionQueue.size() == 0) {
-			return;
-		}
-		Auction auction = auctionQueue.remove(0);
-		if (auction == null) {
-			return;
-		}
-		
-		Player player = getServer().getPlayer(auction.getOwner());
-		if (player == null || !player.isOnline()) {
-			return;
-		}
-		if (!allowCreativeMode && player.getGameMode() == GameMode.CREATIVE) {
-			sendMessage("auction-fail-gamemode-creative", player, null, false);
-			return;
-		}
-			
-		if (!perms.has(player, "auction.start")) {
-			sendMessage("no-permission", player, null, false);
-			return;
-		}
-		if (!auction.isValid()) {
-			return;
-		}
-		if (auction.start()) {
-			publicAuction = auction;
-		}
-	}
-    
-    public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
-
-    	// Make sure the decimalPlaces loaded correctly.
-    	// Sometimes the econ loads after floAuction.
-	    if (!loadedDecimalFromVault && econ.isEnabled()) {
-	    	loadedDecimalFromVault = true;
-			decimalPlaces = econ.fractionalDigits();
-			config.set("decimal-places", decimalPlaces);
-			if (decimalPlaces < 1) {
-				decimalRegex = "^[0-9]{1,13}$";
-			} else if (decimalPlaces == 1) {
-				decimalRegex = "^[0-9]{0,13}(\\.[0-9])?$";
-			} else {
-				decimalRegex = "^[0-9]{0,13}(\\.[0-9]{1," + decimalPlaces + "})?$";
-			}
-	    }
-    	
-    	Player player = null;
-    	Auction auction = null;
-
-		// In the mean time, use public auction.
-		auction = publicAuction;
-		String userScope = "public_auction";
-		String playerName = "";
-
-    	if (sender instanceof Player) {
-    		player = (Player) sender;
-			playerName = player.getName();
-    	} else {
-			playerName = "*console*";
-    	}
-
-		if (
-				cmd.getName().equalsIgnoreCase("auction") &&
-				args.length > 0 &&
-				args[0].equalsIgnoreCase("on")
-		) {
-			int index = voluntarilyDisabledUsers.indexOf(playerName);
-			if (index != -1) {
-				voluntarilyDisabledUsers.remove(index);
-			}
-			sendMessage("auction-enabled", sender, null, false);
-			saveObject(voluntarilyDisabledUsers, "voluntarilyDisabledUsers.ser");
-			return true;
-		}
-     
-    	if (voluntarilyDisabledUsers.contains(playerName)) {
-    		voluntarilyDisabledUsers.remove(voluntarilyDisabledUsers.indexOf(playerName));
-			sendMessage("auction-fail-disabled", sender, null, false);
-			voluntarilyDisabledUsers.add(playerName);
-			saveObject(voluntarilyDisabledUsers, "voluntarilyDisabledUsers.ser");
-			return true;
-		}
-    	
-    	if (suspendAllAuctions) {
-	    	if (args.length == 1 && args[0].equalsIgnoreCase("resume")) {
-				if (player != null && !perms.has(player, "auction.admin")) {
-	    			sendMessage("no-permission", sender, null, false);
-	    			return true;
-				}
-				// Suspend globally:
-				suspendAllAuctions = false;
-    			sendMessage("unsuspension-global", (Player) null, null, true);
-				return true;
-			}
-			sendMessage("suspension-global", sender, null, false);
-    		return true;
-    	}
-    	
-    	if (player != null && suspendedUsers.contains(playerName.toLowerCase())) {
-			sendMessage("suspension-user", player, null, false);
-			return true;
-    	}
-
-    	if (
-    		cmd.getName().equalsIgnoreCase("auc") ||
-    		cmd.getName().equalsIgnoreCase("auction") ||
-    		cmd.getName().equalsIgnoreCase("sauc") ||
-    		cmd.getName().equalsIgnoreCase("sealedauction")
-    	) {
-    		if (args.length > 0) {
-/*    			if (args[0].equalsIgnoreCase("addlore")) {
-    				if (player == null || !perms.has(player, "auction.admin")) {
-    	    			sendMessage("no-permission", sender, null, false);
-    	    			return true;
-    				}
-    				ItemStack heldItem = player.getItemInHand();
-    				if (heldItem == null) return true;
-    				String[] lore = new String[4];
-    				lore[0] = "Flobi's Lore";
-    				lore[1] = "Crazy shit goes here!";
-    				lore[2] = "More lore!";
-    				lore[3] = "Last line of lore.";
-    				items.setLore(heldItem, lore);
-    				return true;
-    			}*/
-    			if (args[0].equalsIgnoreCase("reload")) {
-    				if (player != null && !perms.has(player, "auction.admin")) {
-    	    			sendMessage("no-permission", sender, null, false);
-    	    			return true;
-    				}
-    				defConfigStream = getResource("config.yml");
-    				defTextConfigStream = getResource("language.yml");
-    				loadConfig();
-	    			sendMessage("plugin-reloaded", sender, null, false);
-    				return true;
-/*    			} else if (args[0].equalsIgnoreCase("orphans")) {
-    				if (player != null && !perms.has(player, "auction.admin")) {
-    	    			sendMessage("no-permission", sender, null, false);
-    	    			return true;
-    				}
-    				
-    				for(int i = 0; i < orphanLots.size(); i++) {
-    					if (orphanLots.get(i) != null) {
-    						AuctionLot lot = orphanLots.get(i);
-    		    			sendMessage(lot.getOwner() + ": " + lot.getQuantity() + " " + items.getItemName(lot.getTypeStack()), sender, null, false);
-    					}
-    				}
-
-    				return true;*/
-    			} else if (args[0].equalsIgnoreCase("resume")) {
-    				if (player != null && !perms.has(player, "auction.admin")) {
-    	    			sendMessage("no-permission", sender, null, false);
-    	    			return true;
-    				}
-
-					if (!suspendedUsers.contains(args[1].toLowerCase())) {
-		    			sendMessage("unsuspension-user-fail-not-suspended", sender, null, false);
-		    			return true;
-					}
-
-					suspendedUsers.remove(args[1].toLowerCase());
-					saveObject(suspendedUsers, "suspendedUsers.ser");
-	    			sendMessage("unsuspension-user", getServer().getPlayer(args[1]), null, false);
-	    			sendMessage("unsuspension-user-success", sender, null, false);
-    				
-    				return true;
-    			} else if (args[0].equalsIgnoreCase("suspend")) {
-    				if (player != null && !perms.has(player, "auction.admin")) {
-    	    			sendMessage("no-permission", sender, null, false);
-    	    			return true;
-    				}
-    				if (args.length > 1) {
-    					// Suspend a player:
-    					if (suspendedUsers.contains(args[1].toLowerCase())) {
-    		    			sendMessage("suspension-user-fail-already-suspended", sender, null, false);
-    		    			return true;
-    					}
-    					
-    					Player playerToSuspend = getServer().getPlayer(args[1]);
-    					
-    					if (playerToSuspend == null || !playerToSuspend.isOnline()) {
-    		    			sendMessage("suspension-user-fail-is-offline", sender, null, false);
-    		    			return true;
-    					}
-    					
-    					if (perms.has(playerToSuspend, "auction.admin")) {
-    		    			sendMessage("suspension-user-fail-is-admin", sender, null, false);
-    		    			return true;
-    					}
-    					
-    					suspendedUsers.add(args[1].toLowerCase());
-    					saveObject(suspendedUsers, "suspendedUsers.ser");
-		    			sendMessage("suspension-user", playerToSuspend, null, false);
-		    			sendMessage("suspension-user-success", sender, null, false);
-    					
-    					return true;
-    				}
-    				// Suspend globally:
-    				suspendAllAuctions = true;
-    				
-    				// Clear queued auctions first.
-    				auctionQueue.clear();
-    				
-    				// Loop through all scopes when they come around.
-    				if (publicAuction != null) {
-    					publicAuction.cancel();
-    				}
-
-	    			sendMessage("suspension-global", (Player) null, null, true);
-
-	    			return true;
-    			} else if (
-        				args[0].equalsIgnoreCase("start") || 
-        				args[0].equalsIgnoreCase("s") ||
-        				args[0].equalsIgnoreCase("this") ||
-        				args[0].equalsIgnoreCase("hand") ||
-        				args[0].equalsIgnoreCase("all") ||
-        				args[0].matches("[0-9]+")
-    			) {
-    				// Start new auction!
-    	    		if (player == null) {
-    	    			sendMessage("auction-fail-console", sender, null, false);
-    	    			return true;
-    	    		}
-    	    		if (!allowCreativeMode && player.getGameMode() == GameMode.CREATIVE) {
-    	    			sendMessage("auction-fail-gamemode-creative", sender, null, false);
-    	    			return true;
-    	    		}
-    	    			
-    				if (!perms.has(player, "auction.start")) {
-    	    			sendMessage("no-permission", sender, null, false);
-    	    			return true;
-    				}
-    				
-    				if (cmd.getName().equalsIgnoreCase("sealedauction") || cmd.getName().equalsIgnoreCase("sauc")) {
-    					if (allowSealedAuctions) {
-    						queueAuction(new Auction(this, player, args, userScope, true), player, auction);
-    					} else {
-    						sendMessage("auction-fail-no-sealed-auctions", sender, auction, false);
-    					}
-    				} else {
-    					if (allowUnsealedAuctions) {
-    						queueAuction(new Auction(this, player, args, userScope, false), player, auction);
-    					} else {
-    						queueAuction(new Auction(this, player, args, userScope, true), player, auction);
-    					}
-    				}
-
-					return true;
-    			} else if (
-        				args[0].equalsIgnoreCase("prep") || 
-        				args[0].equalsIgnoreCase("p")
-    			) {
-    				// Save a users individual starting default values.
-    	    		if (player == null) {
-    	    			sendMessage("auction-fail-console", sender, null, false);
-    	    			return true;
-    	    		}
-    				if (!perms.has(player, "auction.start")) {
-    	    			sendMessage("no-permission", sender, null, false);
-    	    			return true;
-    				}
-    				
-    				// The function returns null and sends error on failure.
-    				String[] mergedArgs = functions.mergeInputArgs(playerName, args, true);
-    				
-    				if (mergedArgs != null) {
-						floAuction.userSavedInputArgs.put(playerName, mergedArgs);
-						floAuction.saveObject(floAuction.userSavedInputArgs, "userSavedInputArgs.ser");
-						if (allowBuyNow) {
-							sendMessage("prep-save-success-with-buynow", sender, null, false);
-						} else {
-							sendMessage("prep-save-success", sender, null, false);
-						}
-    				}
-
-					return true;
-    			} else if (args[0].equalsIgnoreCase("cancel") || args[0].equalsIgnoreCase("c")) {
-    				if (auction == null && auctionQueue.size() == 0) {
-    					sendMessage("auction-fail-no-auction-exists", sender, auction, false);
-    					return true;
-    				}
-    				
-    				for(int i = 0; i < auctionQueue.size(); i++){
-    					if (auctionQueue.get(i).getOwner().equalsIgnoreCase(playerName)) {
-    						auctionQueue.remove(i);
-    						sendMessage("auction-cancel-queued", player, auction, false);
-    						return true;
-    					}
-    				}
-    				
-    				if (auction == null) {
-    					sendMessage("auction-fail-no-auction-exists", sender, auction, false);
-    					return true;
-    				}
-    				
-					if (player == null || player.getName().equalsIgnoreCase(auction.getOwner()) || perms.has(player, "auction.admin")) {
-						if (cancelPreventionSeconds > auction.getRemainingTime() || cancelPreventionPercent > (double)auction.getRemainingTime() / (double)auction.getTotalTime() * 100D) {
-	    					sendMessage("auction-fail-cancel-prevention", player, auction, false);
-						} else {
-	    					auction.cancel();
-	    					publicAuction = null;
-						}
-					} else {
-    					sendMessage("auction-fail-not-owner-cancel", player, auction, false);
-					}
-    				return true;
-    			} else if (args[0].equalsIgnoreCase("confiscate") || args[0].equalsIgnoreCase("impound")) {
-    				if (auction == null) {
-    					sendMessage("auction-fail-no-auction-exists", sender, auction, false);
-    					return true;
-    				}
-    				
-    				if (player == null) {
-    					sendMessage("confiscation-fail-console", player, auction, false);
-    					return true;
-    				}
-					if (!perms.has(player, "auction.admin")) {
-    					sendMessage("no-permission", player, auction, false);
-    					return true;
-					}
-					if (playerName.equalsIgnoreCase(auction.getOwner())) {
-    					sendMessage("confiscation-fail-self", player, auction, false);
-    					return true;
-					}
-					auction.confiscate(player);
-					publicAuction = null;
-    				return true;
-    			} else if (args[0].equalsIgnoreCase("end") || args[0].equalsIgnoreCase("e")) {
-    				if (auction == null) {
-    					sendMessage("auction-fail-no-auction-exists", player, auction, false);
-        				return true;
-    				}
-    				if (!allowEarlyEnd) {
-    					sendMessage("auction-fail-no-early-end", player, auction, false);
-        				return true;
-    				}
-					if (player.getName().equalsIgnoreCase(auction.getOwner())) {
-    					auction.end();
-    					publicAuction = null;
-					} else {
-    					sendMessage("auction-fail-not-owner-end", player, auction, false);
-					}
-    				return true;
-    			} else if (
-    					args[0].equalsIgnoreCase("stfu") ||
-    					args[0].equalsIgnoreCase("ignore") ||
-        				args[0].equalsIgnoreCase("quiet") ||
-        				args[0].equalsIgnoreCase("off") ||
-        				args[0].equalsIgnoreCase("silent") ||
-        				args[0].equalsIgnoreCase("silence")
-    			) {
-    				if (voluntarilyDisabledUsers.indexOf(playerName) == -1) {
-    					sendMessage("auction-disabled", sender, null, false);
-    					voluntarilyDisabledUsers.add(playerName);
-    					saveObject(voluntarilyDisabledUsers, "voluntarilyDisabledUsers.ser");
-    				}
-    				return true;
-    			} else if (args[0].equalsIgnoreCase("info") || args[0].equalsIgnoreCase("i")) {
-    				if (auction == null) {
-    					sendMessage("auction-info-no-auction", player, auction, false);
-    					return true;
-    				}
-					auction.info(sender, false);
-    				return true;
-    			} else if (args[0].equalsIgnoreCase("queue") || args[0].equalsIgnoreCase("q")) {
-    				if (auctionQueue.isEmpty()) {
-    					sendMessage("auction-queue-status-not-in-queue", player, auction, false);
-    					return true;
-    				}
-    				for(int i = 0; i < auctionQueue.size(); i++){
-    					if (auctionQueue.get(i).getOwner().equalsIgnoreCase(playerName)) {
-        					sendMessage("auction-queue-status-in-queue", player, auction, false);
-    						return true;
-    					}
-    				}
-
-					sendMessage("auction-queue-status-not-in-queue", player, auction, false);
-    				return true;
-    			}
-    		}
-			sendMessage("auction-help", sender, auction, false);
-    		return true;
-    	} else if (cmd.getName().equalsIgnoreCase("bid")) {
-    		if (player == null) {
-    			sendMessage("bid-fail-console", console, null, false);
-    			return true;
-    		} 
-    		if (!allowCreativeMode && player.getGameMode().equals(GameMode.CREATIVE)) {
-    			sendMessage("bid-fail-gamemode-creative", sender, null, false);
-    			return true;
-    		}
-			if (!perms.has(player, "auction.bid")) {
-    			sendMessage("no-permission", sender, null, false);
-    			return true;
-			}
-    		if (auction == null) {
-    			sendMessage("bid-fail-no-auction", player, null, false);
-    			return true;
-    		}
-    		auction.Bid(player, args);
-    		return true;
-    	}
-    	return false;
+    public void onDisable() {
+        AuctionScope.cancelAllAuctions();
+        this.getServer().getScheduler().cancelTask(floAuction.queueTimer);
+        floAuction.plugin = null;
+        this.logToBukkit("plugin-disabled", Level.INFO);
+        floAuction.auctionLog = null;
     }
     
-    public static void sendMessage(String messageKey, CommandSender player, Auction auction, boolean fullBroadcast) {
-    	if (messageKey == null) {
-    		return;
-    	}
-    	List<String> messageKeys = new ArrayList<String>();
-    	messageKeys.add(messageKey);
-    	sendMessage(messageKeys, player, auction, fullBroadcast, "-");
-    }
-
-    public static void sendMessage(List<String> messageKeys, CommandSender player, Auction auction, boolean fullBroadcast) {
-    	sendMessage(messageKeys, player, auction, fullBroadcast, "-");
-    }
-
-    public static void sendMessage(String messageKey, CommandSender player, Auction auction, boolean fullBroadcast, String fireworkAspect) {
-    	if (messageKey == null) {
-    		return;
-    	}
-    	List<String> messageKeys = new ArrayList<String>();
-    	messageKeys.add(messageKey);
-    	sendMessage(messageKeys, player, auction, fullBroadcast, fireworkAspect);
-    }
-
-    public static void sendMessage(List<String> messageKeys, CommandSender player, Auction auction, boolean fullBroadcast, String fireworkAspect) {
-
-    	String playerName = null;
-    	if (player != null) {
-	    	if (player instanceof Player) {
-		    	if (!fullBroadcast && voluntarilyDisabledUsers.indexOf(player.getName()) != -1) {
-		    		// Don't send this user any messages.
-		    		return;
-				}
-		    	playerName = player.getName();
-	    	} else {
-		    	if (!fullBroadcast && voluntarilyDisabledUsers.indexOf("*console*") != -1) {
-		    		// Don't send console any messages.
-		    		return;
-				}
-		    	playerName = "*console*";
-	    	}
-    	}
-    	
-
-    	if (messageKeys == null || messageKeys.size() == 0) {
-    		return;
-    	}
-    	
-    	String owner = null;
-    	String ownerDisplay = null;
-    	String quantity = null;
-    	String lotType = null;
-    	String startingBid = null;
-    	String minBidIncrement = null;
-    	String buyNow = null;
-    	String currentBidder = null;
-    	String currentBid = null;
-    	String currentMaxBid = null;
-    	String timeRemaining = null;
-    	String durabilityRemaining = null;
-    	String endAuctionTax = null;
-    	String startAuctionTax = null;
-    	String bookAuthor = null;
-    	String bookTitle = null;
-    	String displayName = null;
-	String itemName = null;
-    	String rocketPower = null;
-    	ItemStack typeLot = null;
-	String enchantIndicator = null;	
-    	String queuePostition = "-";
-
-		for(int i = 0; i < auctionQueue.size(); i++){
-			if (auctionQueue.get(i).getOwner().equalsIgnoreCase(playerName)) {
-				queuePostition = Integer.toString(i + 1);
-			}
-		}
-
-
-    	if (auction != null) {
-    		typeLot = auction.getLotType();
-    		
-    		if (auction.getOwner() != null) owner = auction.getOwner();
-    		
-    		Player ownerPlayer = server.getPlayer(owner);
-    		if (ownerPlayer != null) {
-    			ownerDisplay = ownerPlayer.getDisplayName();
-    		} else {
-    			ownerDisplay = owner;
-    		}
-    		
-    		quantity = Integer.toString(auction.getLotQuantity());
-    		lotType = items.getItemName(typeLot);
-    		if (auction.getStartingBid() == 0) {
-	    		startingBid = functions.formatAmount(auction.getMinBidIncrement());
-    		} else {
-	    		startingBid = functions.formatAmount(auction.getStartingBid());
-    		}
-    		minBidIncrement = functions.formatAmount(auction.getMinBidIncrement());
-    		buyNow = functions.formatAmount(auction.getBuyNow());
-			
-			timeRemaining = functions.formatTime(auction.getRemainingTime());
-    		startAuctionTax = functions.formatAmount(auction.extractedPreTax);
-			endAuctionTax = functions.formatAmount(auction.extractedPostTax);
-			if (auction.getCurrentBid() != null) {
-				currentBidder = auction.getCurrentBid().getBidder();
-				currentBid = functions.formatAmount(auction.getCurrentBid().getBidAmount());
-				currentMaxBid = functions.formatAmount(auction.getCurrentBid().getMaxBidAmount());
-			} else {
-				currentBidder = "noone";
-				currentBid = startingBid;
-				currentMaxBid = startingBid;
-			}
-        	durabilityRemaining = "-";
-			if (typeLot != null) {
-				if (typeLot.getType().getMaxDurability() > 0) {
-			        DecimalFormat decimalFormat = new DecimalFormat("#%");
-			        durabilityRemaining = decimalFormat.format((1 - ((double) typeLot.getDurability() / (double) typeLot.getType().getMaxDurability())));
-				}
-			}
-        	bookAuthor = items.getBookAuthor(typeLot);
-        	if (bookAuthor == null) bookAuthor = "";
-        	bookTitle = items.getBookTitle(typeLot);
-        	if (bookTitle == null) bookTitle = "";
-        	displayName = items.getDisplayName(typeLot);
-        	if (displayName == null) displayName = "";
-        	
-        	if (displayName.isEmpty()) {
-			// displayName is empty, nothing in it
-			itemName = ChatColor.translateAlternateColorCodes('&', textConfig.getString("auction-info-regular-item-name-style")) + lotType;
-        	} else {
-			// Item has a custom name, so take the format from language.yml and replace the %d with the type of item
-			displayName = ChatColor.translateAlternateColorCodes('&', textConfig.getString("auction-info-custom-item-name-style")) + "\"" + displayName + "\"";
-			displayName += ChatColor.translateAlternateColorCodes('&', "&r");
-
-			// Take the item's type format from language.yml, insert its content, then apply its style
-			itemName = textConfig.getString("auction-info-custom-item-name-orig-item-format").replace("%d", lotType);
-			itemName = ChatColor.translateAlternateColorCodes('&', textConfig.getString("auction-info-custom-item-name-orig-item-style")) + itemName;
-			itemName += ChatColor.translateAlternateColorCodes('&', "&r");
-		}
-
-		if(!typeLot.getEnchantments().isEmpty()) {
-			// Take the specified indicator from language.yml
-			enchantIndicator = textConfig.getString("auction-info-enchant-indicator-format");
-			enchantIndicator = ChatColor.translateAlternateColorCodes('&', textConfig.getString("auction-info-enchant-indicator-style")) + enchantIndicator;
-			enchantIndicator += ChatColor.translateAlternateColorCodes('&', "&r");
-		}else{
-			// No enchants on item
-			enchantIndicator = "";
-		}
-        	
-			if (typeLot != null && typeLot.getType() == Material.FIREWORK) {
-				Integer power = items.getFireworkPower(typeLot);
-				if (power != null) {
-					rocketPower = power.toString();
-				}
-			}
-			if (rocketPower == null) rocketPower = "-";
-    	} else {
-        	owner = "-";
-        	ownerDisplay = "-";
-        	quantity = "-";
-        	lotType = "-";
-        	startingBid = "-";
-        	minBidIncrement = "-";
-        	buyNow = "-";
-        	currentBidder = "-";
-        	currentBid = "-";
-        	currentMaxBid = "-";
-        	timeRemaining = "-";
-        	durabilityRemaining = "-";
-    		startAuctionTax = "-";
-        	endAuctionTax = "-";
-        	bookAuthor = "-";
-        	bookTitle = "-";
-        	displayName = "-";
-		itemName = "-";
-        	rocketPower = "-";
-		enchantIndicator = "-";
-    	}
-    	
-    	for (int l = 0; l < messageKeys.size(); l++) {
-    		String messageKey = messageKeys.get(l);
-        	if (messageKey == null) {
-        		continue;
-        	}
-    		
-	    	List<String> messageList = textConfig.getStringList(messageKey);
-	    	
-	    	String originalMessage = null;
-	    	if (messageList == null || messageList.size() == 0) {
-	    		originalMessage = textConfig.getString(messageKey);
-	    		
-	    		if (originalMessage == null || originalMessage.length() == 0) {
-	        		continue;
-	    		} else {
-	        		messageList = Arrays.asList(originalMessage.split("(\r?\n|\r)"));
-	    		}
-	    	}
-	    	
-	    	for (Iterator<String> i = messageList.iterator(); i.hasNext(); ) {
-	    		String messageListItem = i.next();
-	    		String message = chatPrep(messageListItem);
-		
-				message = message.replace("%o", owner);
-				message = message.replace("%O", ownerDisplay);
-
-				message = message.replace("%q", quantity);
-				message = message.replace("%i", displayName);
-				message = message.replace("%I", itemName);
-				message = message.replace("%e", enchantIndicator);
-				message = message.replace("%s", startingBid);
-				message = message.replace("%n", minBidIncrement);
-				message = message.replace("%f", buyNow);
-				message = message.replace("%b", currentBid);
-				message = message.replace("%B", currentBidder);
-				message = message.replace("%h", currentMaxBid);
-				message = message.replace("%t", timeRemaining);
-				message = message.replace("%D", durabilityRemaining);
-				message = message.replace("%x", startAuctionTax);
-				message = message.replace("%X", endAuctionTax);
-				message = message.replace("%y", bookAuthor);
-				message = message.replace("%Y", bookTitle);
-				message = message.replace("%d", lotType);
-				message = message.replace("%r", rocketPower);
-				message = message.replace("%k", Integer.toString(auctionQueue.size()));
-				message = message.replace("%Q", queuePostition);
-				message = message.replace("%c", floAuction.econ.currencyNameSingular());
-				message = message.replace("%C", floAuction.econ.currencyNamePlural());
-				
-				String[] defaultStartArgs = functions.mergeInputArgs(playerName, new String[] {}, false);
-				if (defaultStartArgs[0].equalsIgnoreCase("this") || defaultStartArgs[0].equalsIgnoreCase("hand")) {
-					message = message.replace("%U", textConfig.getString("prep-amount-in-hand"));
-				} else if (defaultStartArgs[0].equalsIgnoreCase("all")) {
-					message = message.replace("%U", textConfig.getString("prep-all-of-this-kind"));
-				} else {
-					message = message.replace("%U", textConfig.getString("prep-qty-of-this-kind"));
-				}
-				message = message.replace("%u", defaultStartArgs[0]);
-				message = message.replace("%v", defaultStartArgs[1]);
-				message = message.replace("%V", functions.formatAmount(Double.parseDouble(defaultStartArgs[1])));
-				message = message.replace("%w", defaultStartArgs[2]);
-				message = message.replace("%W", functions.formatAmount(Double.parseDouble(defaultStartArgs[2])));
-				message = message.replace("%z", defaultStartArgs[3]);
-				message = message.replace("%Z", functions.formatTime(Integer.parseInt(defaultStartArgs[3])));
-				message = message.replace("%g", defaultStartArgs[4]);
-				message = message.replace("%G", functions.formatAmount(Double.parseDouble(defaultStartArgs[4])));
-				
-				originalMessage = message;
-
-				// Remove multiple whitespace
-				// (neccessary due to potentially non-existant custom item name and enchant indicators leaving gaps)
-				message = message.replaceAll("\\s+", " ");
-				
-				// Firework charges:
-				if (originalMessage.contains("%A")) {
-					if (auction != null) {
-						FireworkEffect[] payloads = items.getFireworkEffects(typeLot);
-						if (payloads != null && payloads.length > 0) {
-							for (int j = 0; j < payloads.length; j++) {
-								FireworkEffect payload = payloads[j];
-								// %A lists all aspects of the payload
-								
-								String payloadAspects = "";
-								String payloadSeparator = ChatColor.translateAlternateColorCodes('&', textConfig.getString("auction-info-payload-separator"));
-								
-								Type type = payload.getType();
-								if (type != null) {
-									if (!payloadAspects.isEmpty()) payloadAspects += payloadSeparator;
-									if (textConfig.getString("firework-shapes." + type.toString()) == null) {
-										payloadAspects += type.toString();
-									} else {
-										payloadAspects += textConfig.getString("firework-shapes." + type.toString());
-									}
-								}
-								List<Color> colors = payload.getColors();
-								for (int k = 0; k < colors.size(); k++) {
-									if (!payloadAspects.isEmpty()) payloadAspects += payloadSeparator;
-									Color color = colors.get(k);
-									String colorRGB = color.toString().replace("Color:[rgb0x", "").replace("]", "");
-									if (textConfig.getString("firework-colors." + colorRGB) == null) {
-										payloadAspects += "#" + colorRGB;
-									} else {
-										payloadAspects += textConfig.getString("firework-colors." + colorRGB);
-									}
-								}
-								if (payload.hasFlicker()) {
-									if (!payloadAspects.isEmpty()) payloadAspects += payloadSeparator;
-									payloadAspects += textConfig.getString("firework-twinkle");
-								}
-								if (payload.hasTrail()) {
-									if (!payloadAspects.isEmpty()) payloadAspects += payloadSeparator;
-									payloadAspects += textConfig.getString("firework-trail");
-								}
-								message = originalMessage.replace("%A", payloadAspects);
-				            	if (fullBroadcast) {
-				            		broadcastMessage(message);
-				            	} else {
-				        	    	player.sendMessage(message);
-				            	}
-				            	log(player, message);
-							}
-							continue;
-						} else {
-							message = message.replace("%A", "-");
-						}
-					} else {
-						message = message.replace("%A", "-");
-					}
-				}
-				
-				
-				// Enchantments:
-				if (originalMessage.contains("%F")) {
-					if (auction != null) {
-		        		Map<Enchantment, Integer> enchantments = typeLot.getEnchantments();
-		        		if (enchantments == null || enchantments.size() == 0) {
-		        			enchantments = items.getStoredEnchantments(typeLot);
-		        		}
-						String enchantmentList = "";
-						String enchantmentSeparator = ChatColor.translateAlternateColorCodes('&', textConfig.getString("auction-info-enchantment-separator"));
-		        		for (Entry<Enchantment, Integer> enchantment : enchantments.entrySet()) {
-		        			if (!enchantmentList.isEmpty()) enchantmentList += enchantmentSeparator;
-		        			enchantmentList += items.getEnchantmentName(enchantment);
-		        		}
-		        		if (enchantmentList.isEmpty()) enchantmentList = ChatColor.translateAlternateColorCodes('&', textConfig.getString("auction-info-enchantment-none"));
-		        		message = message.replace("%F", enchantmentList);
-					} else {
-		        		message = message.replace("%F", "-");
-					}
-				}
-				if (originalMessage.contains("%E")) {
-	    			if (auction != null) {
-		        		Map<Enchantment, Integer> enchantments = typeLot.getEnchantments();
-		        		if (enchantments == null || enchantments.size() == 0) {
-		        			enchantments = items.getStoredEnchantments(typeLot);
-		        		}
-		        		for (Entry<Enchantment, Integer> enchantment : enchantments.entrySet()) {
-		        			message = originalMessage.replace("%E", items.getEnchantmentName(enchantment));
-		        			
-			            	if (fullBroadcast) {
-			            		broadcastMessage(message);
-			            	} else {
-			        	    	player.sendMessage(message);
-			            	}
-			            	log(player, message);
-		        		}
-	    			}
-	    			continue;
-				}
-				
-				if (originalMessage.contains("%L")) {
-	    			if (auction != null) {
-	    				String[] lore = items.getLore(typeLot);
-		        		for (int j = 0; j < lore.length; j++) {
-		        			message = originalMessage.replace("%L", lore[j]);
-		        			
-			            	if (fullBroadcast) {
-			            		broadcastMessage(message);
-			            	} else {
-			        	    	player.sendMessage(message);
-			            	}
-			            	log(player, message);
-		        		}
-	    			}
-	    			continue;
-				}
-	
-				if (fullBroadcast) {
-		    		broadcastMessage(message);
-		    	} else if (player != null) {
-			    	player.sendMessage(message);
-		    	}
-		    	log(player, message);
-	    	}
-    	}
-    	
-    }
-    
-    public static void broadcastMessage(String message) {
-
-    	Player[] onlinePlayers = server.getOnlinePlayers();
-    	
-    	for (Player player : onlinePlayers) {
-        	if (voluntarilyDisabledUsers.indexOf(player.getName()) == -1 && Participant.checkLocation(player.getName())) {
-        		player.sendMessage(message);
-    		}
-    	}
-    	
-    	if (voluntarilyDisabledUsers.indexOf("*console*") == -1) {
-			console.sendMessage(message);
-		}
-    }
-
-    private static void log(CommandSender player, String message) {
-    	if (logAuctions) {
-    		String playerName = null;
-    		
-			BufferedWriter out = null;
-			try {
-		    	if (!auctionLog.exists()) {
-					auctionLog.createNewFile();
-					auctionLog.setWritable(true);
-		    	}
-		    	
-				out = new BufferedWriter(new FileWriter(auctionLog.getAbsolutePath(), true));
-
-				if (player == null) {
-					playerName = "BROADCAST";
-				} else {
-					playerName = player.getName();
-				}
-				
-				out.append((new Date()).toString() + " (" + playerName + "): " + ChatColor.stripColor(message) + "\n");
-				out.close();
-
-			} catch (IOException e) {
-				
-			}
-	    	
-			
-    	}
-		
-	}
-	private boolean setupEconomy() {
-        if (server.getPluginManager().getPlugin("Vault") == null) {
+    public boolean onCommand(final CommandSender sender, final Command cmd, final String label, final String[] args) {
+        if (!floAuction.loadedDecimalFromVault && floAuction.econ.isEnabled()) {
+            floAuction.loadedDecimalFromVault = true;
+            floAuction.decimalPlaces = Math.max(floAuction.econ.fractionalDigits(), 0);
+            floAuction.config.set("decimal-places", (Object)floAuction.decimalPlaces);
+            if (floAuction.decimalPlaces < 1) {
+                floAuction.decimalRegex = "^[0-9]{1,13}$";
+            }
+            else if (floAuction.decimalPlaces == 1) {
+                floAuction.decimalRegex = "^[0-9]{0,13}(\\.[0-9])?$";
+            }
+            else {
+                floAuction.decimalRegex = "^[0-9]{0,13}(\\.[0-9]{1," + floAuction.decimalPlaces + "})?$";
+            }
+        }
+        Player player = null;
+        Auction auction = null;
+        AuctionScope userScope = null;
+        String playerName = null;
+        if (sender instanceof Player) {
+            player = (Player)sender;
+            playerName = player.getName();
+            userScope = AuctionScope.getPlayerScope(player);
+            if (userScope != null) {
+                auction = userScope.getActiveAuction();
+            }
+        }
+        if ((cmd.getName().equalsIgnoreCase("auction") || cmd.getName().equalsIgnoreCase("auc")) && args.length > 0 && args[0].equalsIgnoreCase("on")) {
+            final int index = getVoluntarilyDisabledUsers().indexOf(playerName);
+            if (index != -1) {
+                getVoluntarilyDisabledUsers().remove(index);
+            }
+            floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "auction-enabled" }), playerName, (AuctionScope)null);
+            saveObject(getVoluntarilyDisabledUsers(), "voluntarilyDisabledUsers.ser");
+            return true;
+        }
+        if (getVoluntarilyDisabledUsers().contains(playerName)) {
+            getVoluntarilyDisabledUsers().remove(getVoluntarilyDisabledUsers().indexOf(playerName));
+            floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "auction-fail-disabled" }), playerName, (AuctionScope)null);
+            getVoluntarilyDisabledUsers().add(playerName);
+            saveObject(getVoluntarilyDisabledUsers(), "voluntarilyDisabledUsers.ser");
+            return true;
+        }
+        if (cmd.getName().equalsIgnoreCase("auc") || cmd.getName().equalsIgnoreCase("auction") || cmd.getName().equalsIgnoreCase("sauc") || cmd.getName().equalsIgnoreCase("sealedauction")) {
+            if (args.length > 0) {
+                if (args[0].equalsIgnoreCase("reload")) {
+                    if (player != null && !floAuction.perms.has(player, "auction.admin")) {
+                        floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "plugin-reload-fail-permissions" }), playerName, (AuctionScope)null);
+                        return true;
+                    }
+                    if (AuctionScope.areAuctionsRunning()) {
+                        floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "plugin-reload-fail-auctions-running" }), playerName, (AuctionScope)null);
+                        return true;
+                    }
+                    loadConfig();
+                    floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "plugin-reloaded" }), playerName, (AuctionScope)null);
+                    return true;
+                }
+                else if (args[0].equalsIgnoreCase("resume")) {
+                    if (args.length == 1) {
+                        if (player != null && !floAuction.perms.has(player, "auction.admin")) {
+                            floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "unsuspension-fail-permissions" }), playerName, (AuctionScope)null);
+                            return true;
+                        }
+                        floAuction.suspendAllAuctions = false;
+                        floAuction.messageManager.broadcastAuctionScopeMessage(new CArrayList<String>(new String[] { "unsuspension-global" }), null);
+                        return true;
+                    }
+                    else {
+                        if (player != null && !floAuction.perms.has(player, "auction.admin")) {
+                            floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "unsuspension-fail-permissions" }), playerName, (AuctionScope)null);
+                            return true;
+                        }
+                        if (!floAuction.suspendedUsers.contains(args[1].toLowerCase())) {
+                            floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "unsuspension-user-fail-not-suspended" }), playerName, (AuctionScope)null);
+                            return true;
+                        }
+                        floAuction.suspendedUsers.remove(args[1].toLowerCase());
+                        saveObject(floAuction.suspendedUsers, "suspendedUsers.ser");
+                        floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "unsuspension-user" }), args[1], (AuctionScope)null);
+                        floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "unsuspension-user-success" }), playerName, (AuctionScope)null);
+                        return true;
+                    }
+                }
+                else if (args[0].equalsIgnoreCase("suspend")) {
+                    if (player != null && !floAuction.perms.has(player, "auction.admin")) {
+                        floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "suspension-fail-permissions" }), playerName, (AuctionScope)null);
+                        return true;
+                    }
+                    if (args.length <= 1) {
+                        floAuction.suspendAllAuctions = true;
+                        AuctionScope.cancelAllAuctions();
+                        floAuction.messageManager.broadcastAuctionScopeMessage(new CArrayList<String>(new String[] { "suspension-global" }), null);
+                        return true;
+                    }
+                    if (floAuction.suspendedUsers.contains(args[1].toLowerCase())) {
+                        floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "suspension-user-fail-already-suspended" }), playerName, (AuctionScope)null);
+                        return true;
+                    }
+                    final Player playerToSuspend = this.getServer().getPlayer(args[1]);
+                    if (playerToSuspend == null || !playerToSuspend.isOnline()) {
+                        floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "suspension-user-fail-is-offline" }), playerName, (AuctionScope)null);
+                        return true;
+                    }
+                    if (floAuction.perms.has(playerToSuspend, "auction.admin")) {
+                        floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "suspension-user-fail-is-admin" }), playerName, (AuctionScope)null);
+                        return true;
+                    }
+                    floAuction.suspendedUsers.add(args[1].toLowerCase());
+                    saveObject(floAuction.suspendedUsers, "suspendedUsers.ser");
+                    floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "suspension-user" }), playerToSuspend.getName(), (AuctionScope)null);
+                    floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "suspension-user-success" }), playerName, (AuctionScope)null);
+                    return true;
+                }
+                else if (args[0].equalsIgnoreCase("start") || args[0].equalsIgnoreCase("s") || args[0].equalsIgnoreCase("this") || args[0].equalsIgnoreCase("hand") || args[0].equalsIgnoreCase("all") || args[0].matches("[0-9]+")) {
+                    if (floAuction.suspendAllAuctions) {
+                        floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "suspension-global" }), playerName, (AuctionScope)null);
+                        return true;
+                    }
+                    if (player != null && floAuction.suspendedUsers.contains(playerName.toLowerCase())) {
+                        floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "suspension-user" }), playerName, (AuctionScope)null);
+                        return true;
+                    }
+                    if (player == null) {
+                        floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "auction-fail-console" }), playerName, (AuctionScope)null);
+                        return true;
+                    }
+                    if (!AuctionConfig.getBoolean("allow-gamemode-creative", userScope) && player.getGameMode() == GameMode.CREATIVE) {
+                        floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "auction-fail-gamemode-creative" }), playerName, (AuctionScope)null);
+                        return true;
+                    }
+                    if (userScope == null) {
+                        floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "auction-fail-no-scope" }), playerName, (AuctionScope)null);
+                        return true;
+                    }
+                    if (!floAuction.perms.has(player, "auction.start")) {
+                        floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "auction-fail-permissions" }), playerName, (AuctionScope)null);
+                        return true;
+                    }
+                    if (!AuctionConfig.getBoolean("allow-sealed-auctions", userScope) && !AuctionConfig.getBoolean("allow-unsealed-auctions", userScope)) {
+                        floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "auction-fail-no-auctions-allowed" }), playerName, (AuctionScope)null);
+                        return true;
+                    }
+                    if (cmd.getName().equalsIgnoreCase("sealedauction") || cmd.getName().equalsIgnoreCase("sauc")) {
+                        if (AuctionConfig.getBoolean("allow-sealed-auctions", userScope)) {
+                            userScope.queueAuction(new Auction(this, player, args, userScope, true, floAuction.messageManager));
+                        }
+                        else {
+                            floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "auction-fail-no-sealed-auctions" }), playerName, (AuctionScope)null);
+                        }
+                    }
+                    else if (AuctionConfig.getBoolean("allow-unsealed-auctions", userScope)) {
+                        userScope.queueAuction(new Auction(this, player, args, userScope, false, floAuction.messageManager));
+                    }
+                    else {
+                        userScope.queueAuction(new Auction(this, player, args, userScope, true, floAuction.messageManager));
+                    }
+                    return true;
+                }
+                else if (args[0].equalsIgnoreCase("prep") || args[0].equalsIgnoreCase("p")) {
+                    if (player == null) {
+                        floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "auction-fail-console" }), playerName, (AuctionScope)null);
+                        return true;
+                    }
+                    if (!floAuction.perms.has(player, "auction.start")) {
+                        floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "auction-fail-permissions" }), playerName, (AuctionScope)null);
+                        return true;
+                    }
+                    final String[] mergedArgs = functions.mergeInputArgs(playerName, args, true);
+                    if (mergedArgs != null) {
+                        floAuction.userSavedInputArgs.put(playerName, mergedArgs);
+                        saveObject(floAuction.userSavedInputArgs, "userSavedInputArgs.ser");
+                        floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "prep-save-success" }), playerName, (AuctionScope)null);
+                    }
+                    return true;
+                }
+                else if (args[0].equalsIgnoreCase("cancel") || args[0].equalsIgnoreCase("c")) {
+                    if (userScope == null) {
+                        floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "auction-fail-no-scope" }), playerName, (AuctionScope)null);
+                        return true;
+                    }
+                    if (userScope.getActiveAuction() == null && userScope.getAuctionQueueLength() == 0) {
+                        floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "auction-fail-no-auction-exists" }), playerName, (AuctionScope)null);
+                        return true;
+                    }
+                    final ArrayList<Auction> auctionQueue = userScope.getAuctionQueue();
+                    for (int i = 0; i < auctionQueue.size(); ++i) {
+                        if (auctionQueue.get(i).getOwner().equalsIgnoreCase(playerName)) {
+                            auctionQueue.remove(i);
+                            floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "auction-cancel-queued" }), playerName, (AuctionScope)null);
+                            return true;
+                        }
+                    }
+                    if (auction == null) {
+                        floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "auction-fail-no-auction-exists" }), playerName, (AuctionScope)null);
+                        return true;
+                    }
+                    if (player == null || player.getName().equalsIgnoreCase(auction.getOwner()) || floAuction.perms.has(player, "auction.admin")) {
+                        if (AuctionConfig.getInt("cancel-prevention-seconds", userScope) > auction.getRemainingTime() || AuctionConfig.getDouble("cancel-prevention-percent", userScope) > auction.getRemainingTime() / auction.getTotalTime() * 100.0) {
+                            floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "auction-fail-cancel-prevention" }), playerName, (AuctionScope)null);
+                        }
+                        else {
+                            auction.cancel();
+                        }
+                    }
+                    else {
+                        floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "auction-fail-not-owner-cancel" }), playerName, (AuctionScope)null);
+                    }
+                    return true;
+                }
+                else if (args[0].equalsIgnoreCase("confiscate") || args[0].equalsIgnoreCase("impound")) {
+                    if (auction == null) {
+                        floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "auction-fail-no-auction-exists" }), playerName, (AuctionScope)null);
+                        return true;
+                    }
+                    if (player == null) {
+                        floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "confiscate-fail-console" }), playerName, (AuctionScope)null);
+                        return true;
+                    }
+                    if (!floAuction.perms.has(player, "auction.admin")) {
+                        floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "confiscate-fail-permissions" }), playerName, (AuctionScope)null);
+                        return true;
+                    }
+                    if (playerName.equalsIgnoreCase(auction.getOwner())) {
+                        floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "confiscate-fail-self" }), playerName, (AuctionScope)null);
+                        return true;
+                    }
+                    auction.confiscate(player);
+                    return true;
+                }
+                else if (args[0].equalsIgnoreCase("end") || args[0].equalsIgnoreCase("e")) {
+                    if (auction == null) {
+                        floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "auction-fail-no-auction-exists" }), playerName, (AuctionScope)null);
+                        return true;
+                    }
+                    if (!AuctionConfig.getBoolean("allow-early-end", userScope)) {
+                        floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "auction-fail-no-early-end" }), playerName, (AuctionScope)null);
+                        return true;
+                    }
+                    if (player.getName().equalsIgnoreCase(auction.getOwner())) {
+                        auction.end();
+                    }
+                    else {
+                        floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "auction-fail-not-owner-end" }), playerName, (AuctionScope)null);
+                    }
+                    return true;
+                }
+                else {
+                    if (args[0].equalsIgnoreCase("stfu") || args[0].equalsIgnoreCase("ignore") || args[0].equalsIgnoreCase("quiet") || args[0].equalsIgnoreCase("off") || args[0].equalsIgnoreCase("silent") || args[0].equalsIgnoreCase("silence")) {
+                        if (getVoluntarilyDisabledUsers().indexOf(playerName) == -1) {
+                            floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "auction-disabled" }), playerName, (AuctionScope)null);
+                            getVoluntarilyDisabledUsers().add(playerName);
+                            saveObject(getVoluntarilyDisabledUsers(), "voluntarilyDisabledUsers.ser");
+                        }
+                        return true;
+                    }
+                    if (args[0].equalsIgnoreCase("info") || args[0].equalsIgnoreCase("i")) {
+                        if (auction == null) {
+                            floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "auction-info-no-auction" }), playerName, (AuctionScope)null);
+                            return true;
+                        }
+                        auction.info(sender, false);
+                        return true;
+                    }
+                    else if (args[0].equalsIgnoreCase("queue") || args[0].equalsIgnoreCase("q")) {
+                        final ArrayList<Auction> auctionQueue = userScope.getAuctionQueue();
+                        if (auctionQueue.isEmpty()) {
+                            floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "auction-queue-status-not-in-queue" }), playerName, (AuctionScope)null);
+                            return true;
+                        }
+                        for (int i = 0; i < auctionQueue.size(); ++i) {
+                            if (auctionQueue.get(i).getOwner().equalsIgnoreCase(playerName)) {
+                                floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "auction-queue-status-in-queue" }), playerName, (AuctionScope)null);
+                                return true;
+                            }
+                        }
+                        floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "auction-queue-status-not-in-queue" }), playerName, (AuctionScope)null);
+                        return true;
+                    }
+                }
+            }
+            floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "auction-help" }), playerName, (AuctionScope)null);
+            return true;
+        }
+        if (!cmd.getName().equalsIgnoreCase("bid")) {
             return false;
         }
-        RegisteredServiceProvider<Economy> rsp = server.getServicesManager().getRegistration(Economy.class);
+        if (floAuction.suspendAllAuctions) {
+            floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "suspension-global" }), playerName, (AuctionScope)null);
+            return true;
+        }
+        if (player != null && floAuction.suspendedUsers.contains(playerName.toLowerCase())) {
+            floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "suspension-user" }), playerName, (AuctionScope)null);
+            return true;
+        }
+        if (player == null) {
+            floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "bid-fail-console" }), playerName, (AuctionScope)null);
+            return true;
+        }
+        if (!AuctionConfig.getBoolean("allow-gamemode-creative", userScope) && player.getGameMode().equals((Object)GameMode.CREATIVE)) {
+            floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "bid-fail-gamemode-creative" }), playerName, (AuctionScope)null);
+            return true;
+        }
+        if (!floAuction.perms.has(player, "auction.bid")) {
+            floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "bid-fail-permissions" }), playerName, (AuctionScope)null);
+            return true;
+        }
+        if (auction == null) {
+            floAuction.messageManager.sendPlayerMessage(new CArrayList<String>(new String[] { "bid-fail-no-auction" }), playerName, (AuctionScope)null);
+            return true;
+        }
+        auction.Bid(player, args);
+        return true;
+    }
+    
+    static void log(final String playerName, final String message, final AuctionScope auctionScope) {
+        if (AuctionConfig.getBoolean("log-auctions", auctionScope)) {
+            String scopeId = null;
+            BufferedWriter out = null;
+            try {
+                if (floAuction.auctionLog == null || !floAuction.auctionLog.exists()) {
+                    floAuction.auctionLog.createNewFile();
+                    floAuction.auctionLog.setWritable(true);
+                }
+                out = new BufferedWriter(new FileWriter(floAuction.auctionLog.getAbsolutePath(), true));
+                if (auctionScope == null) {
+                    scopeId = "NOSCOPE";
+                }
+                else {
+                    scopeId = auctionScope.getScopeId();
+                }
+                out.append((CharSequence)(String.valueOf(new Date().toString()) + " (" + playerName + ", " + scopeId + "): " + ChatColor.stripColor(message) + "\n"));
+                out.close();
+            }
+            catch (IOException ex) {}
+        }
+    }
+    
+    private boolean setupEconomy() {
+        if (Bukkit.getPluginManager().getPlugin("Vault") == null) {
+            return false;
+        }
+        final RegisteredServiceProvider<Economy> rsp = (RegisteredServiceProvider<Economy>)Bukkit.getServicesManager().getRegistration((Class)Economy.class);
         if (rsp == null) {
             return false;
         }
-        econ = rsp.getProvider();
-        return econ != null;
+        floAuction.econ = (Economy)rsp.getProvider();
+        return floAuction.econ != null;
     }
-
+    
     private boolean setupChat() {
-        RegisteredServiceProvider<Chat> rsp = server.getServicesManager().getRegistration(Chat.class);
+        final RegisteredServiceProvider<Chat> rsp = (RegisteredServiceProvider<Chat>)Bukkit.getServicesManager().getRegistration((Class)Chat.class);
         if (rsp == null) {
             return false;
         }
-        chat = rsp.getProvider();
-        return chat != null;
+        floAuction.chat = (Chat)rsp.getProvider();
+        return floAuction.chat != null;
     }
-
+    
     private boolean setupPermissions() {
-        RegisteredServiceProvider<Permission> rsp = server.getServicesManager().getRegistration(Permission.class);
-        perms = rsp.getProvider();
-        return perms != null;
+        final RegisteredServiceProvider<Permission> rsp = (RegisteredServiceProvider<Permission>)Bukkit.getServicesManager().getRegistration((Class)Permission.class);
+        floAuction.perms = (Permission)rsp.getProvider();
+        return floAuction.perms != null;
     }
-
-    public static void sendMessage(String messageKey, String playerName, Auction auction) {
-	if (playerName == null) {
-		sendMessage(messageKey, (CommandSender) null, auction, true);
-	} else {
-		sendMessage(messageKey, server.getPlayer(playerName), auction, false);
-	}
+    
+    public static Auction getPlayerAuction(final String playerName) {
+        if (playerName == null) {
+            return null;
+        }
+        return getPlayerAuction(Bukkit.getPlayer(playerName));
+    }
+    
+    public static Auction getPlayerAuction(final Player player) {
+        if (player == null) {
+            return null;
+        }
+        final AuctionScope auctionScope = AuctionScope.getPlayerScope(player);
+        if (auctionScope == null) {
+            return null;
+        }
+        return auctionScope.getActiveAuction();
+    }
+    
+    public static ArrayList<String> getVoluntarilyDisabledUsers() {
+        return floAuction.voluntarilyDisabledUsers;
+    }
+    
+    private static String chatPrepClean(String message, final AuctionScope auctionScope) {
+        message = String.valueOf(AuctionConfig.getLanguageString("chat-prefix", auctionScope)) + message;
+        message = ChatColor.translateAlternateColorCodes('&', message);
+        message = ChatColor.stripColor(message);
+        return message;
+    }
+    
+    public static MessageManager getMessageManager() {
+        return floAuction.messageManager;
+    }
+    
+    private void logToBukkit(final String key, final Level level) {
+        List<String> messageList = AuctionConfig.getLanguageStringList(key, null);
+        String originalMessage = null;
+        if (messageList == null || messageList.size() == 0) {
+            originalMessage = AuctionConfig.getLanguageString(key, null);
+            if (originalMessage != null && originalMessage.length() != 0) {
+                messageList = Arrays.asList(originalMessage.split("(\r?\n|\r)"));
+            }
+        }
+        for (final String messageListItem : messageList) {
+            floAuction.log.log(level, chatPrepClean(messageListItem, null));
+        }
     }
 }
