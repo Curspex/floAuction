@@ -876,7 +876,7 @@ public class floAuction extends JavaPlugin {
     				}
 					auction.info(sender, false);
     				return true;
-    			} else if (args[0].equalsIgnoreCase("queue") || args[0].equalsIgnoreCase("q")) {
+    			} else if (args[0].toLowerCase().startsWith("qu") || args[0].equalsIgnoreCase("q") || args[0].equalsIgnoreCase("list")) {
     				ArrayList<Auction> auctionQueue = userScope.getAuctionQueue();
     				if (auctionQueue.isEmpty()) {
     					messageManager.sendPlayerMessage(new CArrayList<String>("auction-queue-status-not-in-queue"), playerName, (AuctionScope) null);
