@@ -6,9 +6,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 
-import net.milkbowl.vault.item.ItemInfo;
-import net.milkbowl.vault.item.Items;
-
 import org.bukkit.Bukkit;
 import org.bukkit.FireworkEffect;
 import org.bukkit.enchantments.Enchantment;
@@ -18,7 +15,6 @@ import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.PlayerInventory;
 import org.bukkit.inventory.meta.*;
 
-import com.flobi.WhatIsIt.WhatIsIt;
 import com.flobi.floAuction.floAuction;
 
 public class items {

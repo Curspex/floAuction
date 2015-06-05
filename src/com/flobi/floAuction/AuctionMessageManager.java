@@ -175,9 +175,8 @@ public class AuctionMessageManager extends MessageManager {
      * @param auctionScope scope to send it to
      */
     private static void broadcastMessage(List<String> messages, AuctionScope auctionScope) {
-    	Player[] onlinePlayers = Bukkit.getOnlinePlayers();
     	
-    	for (Player player : onlinePlayers) {
+    	for (Player player : Bukkit.getOnlinePlayers()) {
         	if (floAuction.getVoluntarilyDisabledUsers().contains(player.getName())) continue;
     		if (auctionScope != null && !auctionScope.equals(AuctionScope.getPlayerScope(player))) continue;
 //    		sendTellRaw(player.getName(), message);

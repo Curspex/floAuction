@@ -11,11 +11,11 @@ public class InventoryClickListener implements Listener {
 	@EventHandler
 	public void invClick(InventoryClickEvent e)
 	{
-		if(e.getClickedInventory() != null)
+		if(e.getInventory() != null)
 		{
 			if(e.getClick() != null)
 			{
-				if(e.getClickedInventory().getTitle().equals(floAuction.guiQueueName))
+				if(e.getInventory().getTitle().equals(floAuction.guiQueueName))
 				{
 					e.setCancelled(true);
 				}
