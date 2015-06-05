@@ -139,7 +139,7 @@ public class items {
 		ItemMeta itemMeta = item.getItemMeta();
 		if (itemMeta == null) return;
 		if (itemMeta instanceof EnchantmentStorageMeta) {
-			EnchantmentStorageMeta storageMeta = (EnchantmentStorageMeta)itemMeta; 
+			EnchantmentStorageMeta storageMeta = (EnchantmentStorageMeta) itemMeta; 
 			storageMeta.addStoredEnchant(new EnchantmentWrapper(enchantment), level, ignoreLevelRestriction);
 			item.setItemMeta(storageMeta);
 		}
@@ -161,7 +161,7 @@ public class items {
 		ItemMeta itemMeta = item.getItemMeta();
 		if (itemMeta == null) return;
 		if (itemMeta instanceof FireworkMeta) {
-			FireworkMeta fireworkMeta = ((FireworkMeta)itemMeta);
+			FireworkMeta fireworkMeta = (FireworkMeta) itemMeta;
 			fireworkMeta.setPower(power);
 			item.setItemMeta(fireworkMeta);
 		}
@@ -579,7 +579,7 @@ public class items {
 			int enchantmentId = enchantment.getKey().getId();
 			int enchantmentLevel = enchantment.getValue();
 			String enchantmentName = null;
-			if (enchantmentNames == null) {
+			if (enchantmentNames == null || enchantmentNames.isEmpty()) {
 				enchantmentNames = new HashMap<Integer, String>();
 				enchantmentNames.put(0, "Protection");
 				enchantmentNames.put(1, "Fire Protection");
@@ -587,7 +587,7 @@ public class items {
 				enchantmentNames.put(3, "Blast Protection");
 				enchantmentNames.put(4, "Projectile Protection");
 				enchantmentNames.put(5, "Respiration");
-				enchantmentNames.put(6, "Aqua Afinity");
+				enchantmentNames.put(6, "Aqua Affinity");
 				enchantmentNames.put(8, "Depth Strider");
 				enchantmentNames.put(16, "Sharpness");
 				enchantmentNames.put(17, "Smite");
@@ -619,12 +619,12 @@ public class items {
 				enchantmentNames.put(180, "Blast Touch");
 				
 			}
-			if (enchantmentNames.get(enchantmentId) != null) {
+			if (enchantmentNames.containsKey(enchantmentId)) {
 				enchantmentName = enchantmentNames.get(enchantmentId) + " ";
 			} else {
 				enchantmentName = "UNKNOWN ";
 			}
-			if (enchantmentLevels == null) {
+			if (enchantmentLevels == null || enchantmentLevels.isEmpty()) {
 				enchantmentLevels = new HashMap<Integer, String>();
 				enchantmentLevels.put(0, "");
 				enchantmentLevels.put(1, "I");
@@ -633,8 +633,8 @@ public class items {
 				enchantmentLevels.put(4, "IV");
 				enchantmentLevels.put(5, "V");
 			}
-			if (enchantmentLevels.get(enchantmentLevel) != null) {
-				enchantmentName = enchantmentLevels.get(enchantmentLevel) + " ";
+			if (enchantmentLevels.containsKey(enchantmentLevel)) {
+				enchantmentName += enchantmentLevels.get(enchantmentLevel);
 			} else {
 				enchantmentName += enchantmentLevel;
 			}

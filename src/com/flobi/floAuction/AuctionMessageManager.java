@@ -360,6 +360,7 @@ public class AuctionMessageManager extends MessageManager {
     	        		if (enchantments == null || enchantments.size() == 0) {
     	        			enchantments = items.getStoredEnchantments(lot);
     	        		}
+    	        		
     	        		if (enchantments != null) {
         					String enchantmentList = "";
         					String enchantmentSeparator = ChatColor.translateAlternateColorCodes('&', AuctionConfig.getLanguageString("auction-info-enchantment-separator", auctionScope));
