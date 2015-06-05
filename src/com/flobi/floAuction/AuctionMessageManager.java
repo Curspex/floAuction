@@ -179,7 +179,7 @@ public class AuctionMessageManager extends MessageManager {
     	Bukkit.getOnlinePlayers()
     	.stream()
     	.filter(player -> !floAuction.getVoluntarilyDisabledUsers().contains(player.getName()))
-    	.filter(player -> auctionScope != null && !auctionScope.equals(AuctionScope.getPlayerScope(player)))
+    	.filter(player -> auctionScope != null && auctionScope.equals(AuctionScope.getPlayerScope(player)))
     	.forEach(player -> messages.forEach(message -> player.sendMessage(message)));
     	
 /*    	for (Player player : Bukkit.getOnlinePlayers()) {

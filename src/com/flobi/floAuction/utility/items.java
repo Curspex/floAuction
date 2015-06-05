@@ -605,6 +605,19 @@ public class items {
 				enchantmentNames.put(51, "Infinity");
 				enchantmentNames.put(61, "Luck of the Sea");
 				enchantmentNames.put(62, "Lure");
+				
+				// CUSTOM ENCHANTS //
+				
+				enchantmentNames.put(150, "Artillery");
+				enchantmentNames.put(151, "Air Raid");
+				enchantmentNames.put(152, "Speedy Gonzales");
+				enchantmentNames.put(160, "Elixir Protection");
+				enchantmentNames.put(161, "Shock Protection");
+				enchantmentNames.put(162, "Bread Basket");
+				enchantmentNames.put(163, "Fire Storm");
+				enchantmentNames.put(170, "Venom");
+				enchantmentNames.put(180, "Blast Touch");
+				
 			}
 			if (enchantmentNames.get(enchantmentId) != null) {
 				enchantmentName = enchantmentNames.get(enchantmentId) + " ";
