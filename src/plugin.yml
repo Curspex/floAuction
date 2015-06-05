@@ -1,7 +1,7 @@
 name: floAuction
-version: 3.0.8
+version: 3.0.9
 description: Auction plugin for economies.
-authors: [flobi, VirusTotal]
+authors: [flobi, VirusTotal, Omnivion]
 softdepend: [Vault]
 
 main: com.flobi.floAuction.floAuction
@@ -30,12 +30,18 @@ commands:
     usage: /<command> [bid amount] [max bid]
 
 permissions:
+  auction.all:
+    description: Gives access to all auction commands
+    children:
+      auction.*: true
+    default: op
   auction.*:
     description: Gives access to all auction commands
     children:
       auction.admin: true
       auction.start: true
       auction.bid: true
+    default: op
   auction.admin:
     description: Auction administrative functions.
     default: op
