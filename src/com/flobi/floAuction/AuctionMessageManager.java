@@ -176,25 +176,38 @@ public class AuctionMessageManager extends MessageManager {
      */
     private static void broadcastMessage(List<String> messages, AuctionScope auctionScope) {
     	
-    	for (Player player : Bukkit.getOnlinePlayers()) {
+    	Bukkit.getOnlinePlayers()
+    	.stream()
+    	.filter(player -> !floAuction.getVoluntarilyDisabledUsers().contains(player.getName()))
+    	.filter(player -> auctionScope != null && !auctionScope.equals(AuctionScope.getPlayerScope(player)))
+    	.forEach(player -> messages.forEach(message -> player.sendMessage(message)));
+    	
+/*    	for (Player player : Bukkit.getOnlinePlayers()) {
         	if (floAuction.getVoluntarilyDisabledUsers().contains(player.getName())) continue;
     		if (auctionScope != null && !auctionScope.equals(AuctionScope.getPlayerScope(player))) continue;
 //    		sendTellRaw(player.getName(), message);
 	    	for (String message : messages) {
 	    		player.sendMessage(message);
 	    	}
-    	}
+    	}*/
     	
     	if (auctionScope == null && floAuction.getVoluntarilyDisabledUsers().indexOf("*console*") == -1) {
-	    	for (String message : messages) {
+    		messages.stream()
+    		.map(message -> ChatColor.stripColor(message))
+    		.forEach(message -> Bukkit.getConsoleSender().sendMessage(message));
+	    	/*for (String message : messages) {
 	    		message = ChatColor.stripColor(message);
 				Bukkit.getConsoleSender().sendMessage(message);
-	    	}
+	    	}*/
 		}
-    	for (String message : messages) {
+    	
+    	messages.stream()
+    	.map(message -> ChatColor.stripColor(message))
+    	.forEach(message -> floAuction.log("BROADCAST", message, auctionScope));
+    	/*for (String message : messages) {
     		message = ChatColor.stripColor(message);
     		floAuction.log("BROADCAST", message, auctionScope);
-    	}
+    	}*/
     }
     
 	/**
