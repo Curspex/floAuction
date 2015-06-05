@@ -238,9 +238,9 @@ public class floAuction extends JavaPlugin {
      * Called by Bukkit when initializing.  Sets up basic plugin settings.
      */
 	public void onEnable() {
+		plugin = this;
 		this.mUtil = new MaterialUtil(this);
 		dataFolder = getDataFolder();
-		plugin = this;
     	auctionLog = new File(dataFolder, "auctions.log");
 		
         loadConfig();
