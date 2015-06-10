@@ -11,7 +11,7 @@ import com.flobi.floAuction.floAuction;
 
 public class InventoryClickListener implements Listener {
 
-	@EventHandler
+	@EventHandler(ignoreCancelled = true)
 	public void invClick(InventoryClickEvent event)
 	{
 		

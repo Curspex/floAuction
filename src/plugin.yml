@@ -1,5 +1,5 @@
 name: floAuction
-version: 3.0.11
+version: 3.0.12
 description: Auction plugin for economies.
 authors: [flobi, VirusTotal, Omnivion]
 softdepend: [Vault]
